@@ -409,6 +409,7 @@ def process_haplotypes(all_transcripts, genes_haplo_df, all_cdnas, annotations_d
                     local_result_data[haplo_hash][17] += row['Frequency']
                     local_result_data[haplo_hash][18] = add_population_freqs(local_result_data[haplo_hash][18], row['Frequency_population'])
                     local_result_data[haplo_hash][19] = add_population_freqs(local_result_data[haplo_hash][19], row['Frequency_superpopulation'])
+                    local_result_data[haplo_hash][20] += ';' + row['Samples']
                 else:
                     local_result_data[haplo_hash] = [
                         row['TranscriptID'],
