@@ -1,0 +1,61 @@
+diff --git a/src/modules/process_haplotypes.py b/src/modules/process_haplotypes.py
+index 41f9f7d..556ea3f 100644
+--- a/src/modules/process_haplotypes.py
++++ b/src/modules/process_haplotypes.py
+@@ -1,4 +1,5 @@
+ import re
++import gzip
+ from multiprocessing import Pool
+ import pandas as pd
+ import bisect
+@@ -33,11 +34,14 @@ result_columns = [
+ 
+ # create dummy empty files in case of empty input
+ def empty_output(output_file, output_fasta):
+-    outfile = open(output_file, 'w')
++    # honour the .gz suffix: these paths are named by the Snakefile, which
++    # decides on gzip from the config, and the downstream merge rules infer
++    # compression from the same name
++    outfile = gzip.open(output_file, 'wt') if output_file.endswith('.gz') else open(output_file, 'w')
+     outfile.write('\t'.join(result_columns) + '\n')
+     outfile.close()
+ 
+-    outfile = open(output_fasta, 'w')
++    outfile = gzip.open(output_fasta, 'wt') if output_fasta.endswith('.gz') else open(output_fasta, 'w')
+     outfile.close()
+ 
+ # check if a protein variant maps to the UTR or not
+@@ -409,6 +413,7 @@ def process_haplotypes(all_transcripts, genes_haplo_df, all_cdnas, annotations_d
+                     local_result_data[haplo_hash][17] += row['Frequency']
+                     local_result_data[haplo_hash][18] = add_population_freqs(local_result_data[haplo_hash][18], row['Frequency_population'])
+                     local_result_data[haplo_hash][19] = add_population_freqs(local_result_data[haplo_hash][19], row['Frequency_superpopulation'])
++                    local_result_data[haplo_hash][20] += ';' + row['Samples']
+                 else:
+                     local_result_data[haplo_hash] = [
+                         row['TranscriptID'],
+@@ -512,7 +517,9 @@ def process_haplotypes(all_transcripts, genes_haplo_df, all_cdnas, annotations_d
+         else:
+             result_table = [ haplotype for haplotype in local_result_data.values() if (haplotype[-5] >= min_count) ]
+ 
+-        included_haplotype_ids = [ haplotype[3] for haplotype in result_table ]
++        # set (not list) - used only for membership tests below, and a transcript
++        # can carry very many haplotypes when the cohort is large
++        included_haplotype_ids = { haplotype[3] for haplotype in result_table }
+ 
+         # remove haplotypes below threshold from the FASTA header data 
+         for seq in local_result_protein_sequences:
+diff --git a/src/prohap.py b/src/prohap.py
+index a32ea71..5f10da6 100644
+--- a/src/prohap.py
++++ b/src/prohap.py
+@@ -134,7 +134,9 @@ print (('Chr ' + args.chromosome + ':'), 'Assigning variants to transcripts.')
+ vcf_colnames = parse_vcf(all_transcripts, args.input_vcf, annotations_db, args.min_af, args.tmp_dir)
+ 
+ # keep only the samples that are in the metadata table
+-sample_ids = [sample for sample in vcf_colnames if (sample in samples_df['Sample name'].tolist())]
++# (set lookup - the VCF can have tens of thousands of sample columns)
++metadata_sample_names = set(samples_df['Sample name'])
++sample_ids = [sample for sample in vcf_colnames if (sample in metadata_sample_names)]
+ 
+ # check if the vcf file was empty
+ if (len(vcf_colnames) == 0):
