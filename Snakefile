@@ -1,4 +1,33 @@
+import os
+import shlex
+import sys
+
 configfile: "config.yaml"
+
+# Config `implementation` picks the script directory. Every rule, path and reference is shared, so the two arms
+# differ only in which scripts run. legacy/src is the frozen reference (upstream cafcc51 + legacy/legacy-fixes.patch)
+# and src/ the fast implementation. Absolute paths let the workflow run with --directory pointing anywhere.
+LEGACY_SRC = os.path.join(workflow.basedir, 'legacy', 'src')
+FAST_SRC = os.path.join(workflow.basedir, 'src')
+IMPLEMENTATION = config.get('implementation', 'fast')
+if IMPLEMENTATION not in ('fast', 'legacy'):
+    raise ValueError("config 'implementation' must be 'fast' or 'legacy', not " + repr(IMPLEMENTATION))
+SRC = FAST_SRC if IMPLEMENTATION == 'fast' else LEGACY_SRC
+
+# macOS starts multiprocessing workers with 'spawn', which breaks the closures ProHap hands to Pool. There, every
+# script runs through a wrapper that selects 'fork', the default on Linux.
+if sys.platform == 'darwin':
+    PYTHON = 'python3 ' + shlex.quote(os.path.join(workflow.basedir, 'tools', 'run_fork.py'))
+else:
+    PYTHON = 'python3'
+
+def script(name, src=None):
+    """Shell command that runs one of ProHap's scripts from SRC, or from src (LEGACY_SRC for the ProVar rules)."""
+    return PYTHON + ' ' + shlex.quote(os.path.join(src or SRC, name))
+
+# shell.prefix() replaces Snakemake's default prefix, bash strict mode, so it is repeated here. The fixed hash seed
+# keeps FASTA record order reproducible, and the user's site-packages must not shadow the environment's packages.
+shell.prefix("set -euo pipefail; export PYTHONHASHSEED=0 PYTHONNOUSERSITE=1; ")
 
 VARIANT_VCF_FILES = config['variant_vcf']
 CHROMOSOMES = config['chromosomes']
@@ -32,10 +61,11 @@ rule parse_gtf_whole:
     input:
         "data/gtf/" + config['annotationFilename'] + ".gtf"
     output:
-        temp("data/gtf/" + config['annotationFilename'] + ".db")
+        # not temp(): parsing the whole GTF is the most expensive setup step, and the DB is reused across runs
+        "data/gtf/" + config['annotationFilename'] + ".db"
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/parse_gtf.py -i {input} -o {output}"
+        script('parse_gtf.py') + " -i {input} -o {output}"
 
 rule get_transcript_list:
     input:
@@ -45,7 +75,7 @@ rule get_transcript_list:
     params:
         biotypes=config['included_transcript_biotypes']
     shell:
-        "python3 src/get_transcript_list.py -i {input} -bio {params.biotypes} -o {output}"
+        script('get_transcript_list.py') + " -i {input} -bio {params.biotypes} -o {output}"
 
 rule download_cdnas_fasta:
     output:
@@ -79,19 +109,20 @@ rule reference_filter_format:
         "data/fasta/ensembl_reference_proteinDB_" + str(config['ensembl_release']) + "_tagged.fa"
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/fasta_format_headers.py -i {input} -o {output} -t _ensref -use_ENST 1 "
+        script('fasta_format_headers.py') + " -i {input} -o {output} -t _ensref -use_ENST 1 "
 
 rule default_transcript_list:
     input:
         ref_fasta="data/fasta/ensembl_reference_proteinDB_" + str(config['ensembl_release']) + "_tagged.fa",
         annot="data/gtf/" + config['annotationFilename'] + ".db"
     output:
-        temp("data/transcripts_reference_" + str(config['ensembl_release'])  + ".csv")
+        # not temp(): reused across runs, and often given directly as custom_transcript_list
+        "data/transcripts_reference_" + str(config['ensembl_release'])  + ".csv"
     params:
         MANE=int(config['only_MANE_select'])
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/get_reference_ENST.py -i {input.ref_fasta} -annot {input.annot} -MANE {params.MANE} -o {output}"
+        script('get_reference_ENST.py') + " -i {input.ref_fasta} -annot {input.annot} -MANE {params.MANE} -o {output}"
 
 rule reference_remove_stop:
     input:
@@ -103,7 +134,7 @@ rule reference_remove_stop:
         tr_filter=('-tr data/transcripts_reference_' + str(config['ensembl_release']) + '.csv') if config['only_MANE_select'] else ''
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/remove_stop_codons.py -i {input.fasta} -o {output} -min_len 6 {params.tr_filter} "
+        script('remove_stop_codons.py') + " -i {input.fasta} -o {output} -min_len 6 {params.tr_filter} "
 
 rule contaminants_fix_headers:
     input:
@@ -112,7 +143,7 @@ rule contaminants_fix_headers:
         "data/fasta/crap_tagged.fa.gz"
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/fasta_format_headers.py -i {input} -o {output} -t _cont"
+        script('fasta_format_headers.py') + " -i {input} -o {output} -t _cont"
 
 # filter the GTF so that only features on the desired chromosome are present
 rule split_gtf:
@@ -129,10 +160,11 @@ rule parse_gtf_chromosome:
     input:
         "data/gtf/" + config['annotationFilename'] + "_chr{chr}.gtf"
     output:
-        temp("data/gtf/" + config['annotationFilename'] + "_chr{chr}.db")
+        # not temp(): reused across runs, like the whole-genome DB
+        "data/gtf/" + config['annotationFilename'] + "_chr{chr}.db"
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/parse_gtf.py -i {input} -o {output}"
+        script('parse_gtf.py') + " -i {input} -o {output}"
 
 # ------------------------------------ ProVar rules ------------------------------------
 
@@ -145,7 +177,7 @@ rule split_variant_vcf:
         output_prefix="tmp/variants_{vcf}/variants"
     conda: "envs/prohap.yaml"
     shell:
-        "python src/fragment_variant_vcf.py -i {input} -o {params.output_prefix} ; touch {output}"
+        script('fragment_variant_vcf.py', LEGACY_SRC) + " -i {input} -o {params.output_prefix} ; touch {output}"
 
 rule compute_variants:
     input:
@@ -167,8 +199,8 @@ rule compute_variants:
         require_start=config['var_require_start']
     conda: "envs/prohap.yaml"
     shell:
-        "mkdir -p {params.tmp_dir}; mkdir -p log; mkdir -p results; "
-        "python3 src/provar.py "
+        "mkdir -p {params.tmp_dir}; mkdir -p log; mkdir -p results; " +
+        script('provar.py', LEGACY_SRC) + " "
         "-i {params.input_vcf} -db {input.db} -transcripts {input.tr} -cdna {input.fasta} "
         "-chr {wildcards.chr} -acc_prefix {params.acc_prefix} -af {params.min_af} -require_start {params.require_start} "
         "-log {params.log_file} -tmp_dir {params.tmp_dir} -output_csv {output.tsv} -output_fasta {output.fasta} " + 
@@ -183,7 +215,7 @@ rule merge_var_tables_vcf:
         input_file_list = ','.join(expand("results/" + WORKING_DIR_NAME_VAR + "/variants_{{vcf}}/variants_chr{chr}.tsv.gz", chr=CHROMOSOMES))
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/merge_tables.py -i {params.input_file_list} -o {output}"
+        script('merge_tables.py', LEGACY_SRC) + " -i {params.input_file_list} -o {output}"
 
 rule merge_var_fasta_vcf:
     input:
@@ -206,7 +238,7 @@ rule merge_var_tables:
         input_file_list = ','.join(expand("results/" + WORKING_DIR_NAME_VAR + "/variants_{vcf}/variants_all.tsv.gz", vcf=VARIANT_VCF_FILES.keys()))
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/merge_tables.py -i {params.input_file_list} -o {output}"
+        script('merge_tables.py', LEGACY_SRC) + " -i {params.input_file_list} -o {output}"
 
 rule merge_var_fasta:
     input:
@@ -227,7 +259,7 @@ rule var_fasta_remove_stop:
         temp("results/variants_all_clean.fa.gz")
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/remove_stop_codons.py -i {input} -o {output} -min_len 6 "
+        script('remove_stop_codons.py', LEGACY_SRC) + " -i {input} -o {output} -min_len 6 "
 
 # ------------------------------------ ProHap rules ------------------------------------
 
@@ -242,8 +274,8 @@ rule filter_phased_vcf:
         AF_threshold=config['phased_min_af'],
         AF_field=config['phased_af_field']
     shell:
-        "mkdir -p data/vcf/phased ; "
-        "python3 src/vcf_filter_fix.py -i \'{params.input_file_glob}\' -chr {wildcards.chr} -af {params.AF_threshold} -af_field {params.AF_field} -o {output} "
+        "mkdir -p data/vcf/phased ; " +
+        script('vcf_filter_fix.py') + " -i \'{params.input_file_glob}\' -chr {wildcards.chr} -af {params.AF_threshold} -af_field {params.AF_field} -o {output} "
 
 rule compute_haplotypes:
     input:
@@ -270,8 +302,8 @@ rule compute_haplotypes:
     threads: config['max_cores']
     conda: "envs/prohap.yaml"
     shell:
-        "mkdir -p {params.tmp_dir}; mkdir -p log; mkdir -p results; "
-        "python3 src/prohap.py "
+        "mkdir -p {params.tmp_dir}; mkdir -p log; mkdir -p results; " +
+        script('prohap.py') + " "
         "-i \"{input.vcf}\" -db \"{input.db}\" -transcripts \"{input.tr}\" -cdna \"{input.fasta}\" -s \"{input.samples}\" "
         "-chr {wildcards.chr} -min_hap_freq {params.freq_threshold} -min_hap_count {params.count_threshold} "
         "-acc_prefix enshap_{wildcards.chr} -id_prefix haplo_chr{wildcards.chr} -require_start {params.require_start} -ignore_UTR {params.ignore_UTR} -skip_start_lost {params.skip_start_lost} "
@@ -288,7 +320,7 @@ rule merge_haplo_tables:
         input_file_list = ','.join(expand("results/" + WORKING_DIR_NAME_HAPLO + "/haplo_chr{chr}.tsv.gz", chr=CHROMOSOMES))
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/merge_tables.py -i {params.input_file_list} -o {output}"
+        script('merge_tables.py') + " -i {params.input_file_list} -o {output}"
 
 rule extract_sample_names:
     input:
@@ -298,7 +330,7 @@ rule extract_sample_names:
         samples=('.'.join(config['haplo_table_file'].split('.')[:-2]) + '_sampleIDs.tsv.gz') if config['haplo_table_file'].endswith('.gz') else ('.'.join(config['haplo_table_file'].split('.')[:-1]) + '_sampleIDs.tsv')
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/haplo_extract_sample_names.py -hap_tsv {input} -o {output.haplo_tsv} -samples {output.samples} "    
+        script('haplo_extract_sample_names.py') + " -hap_tsv {input} -o {output.haplo_tsv} -samples {output.samples} "    
 
 rule merge_fasta:
     input:
@@ -319,7 +351,7 @@ rule haplo_fasta_remove_stop:
         temp("results/haplo_all_clean.fa.gz")
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/remove_stop_codons.py -i {input} -o {output} -min_len 6 "
+        script('remove_stop_codons.py') + " -i {input} -o {output} -min_len 6 "
 
 # ------------------------------------ post-processing rules ------------------------------------
 
@@ -330,7 +362,7 @@ rule added_fasta_remove_stop:
         temp("results/haplo_added_clean.fa.gz")
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/remove_stop_codons.py -i {input} -o {output} -min_len 6 "
+        script('remove_stop_codons.py') + " -i {input} -o {output} -min_len 6 "
 
 rule mix_with_reference_proteome:
     input:
@@ -358,7 +390,7 @@ rule merge_duplicate_seq:
         #config['final_fasta_file']                         
     conda: "envs/prohap.yaml"
     shell:
-        "python3 src/merge_duplicate_seq.py -i {input} -o {output} "
+        script('merge_duplicate_seq.py') + " -i {input} -o {output} "
 
 # UTRs in ProHap are removed by default (can be changed), but not in ProVar -> make sure all UTRs are removed
 rule remove_UTR_seq:
@@ -368,7 +400,7 @@ rule remove_UTR_seq:
         config['final_fasta_file']
     conda: "envs/prohap.yaml"
     shell:
-        "python src/remove_UTR_seq.py -i {input} -o {output}"
+        script('remove_UTR_seq.py') + " -i {input} -o {output}"
 
 rule simpify_fasta_headers:
     input:
@@ -381,6 +413,6 @@ rule simpify_fasta_headers:
         header=('.'.join(config['final_fasta_file'].split('.')[:-2]) + '_header.tsv.gz') if config['final_fasta_file'].endswith('.gz') else ('.'.join(config['final_fasta_file'].split('.')[:-1]) + '_header.tsv')
     conda: "envs/prohap.yaml"
     shell:
-        "python src/fasta_simplify_headers.py -i {input.fasta} " +
+        script('fasta_simplify_headers.py') + " -i {input.fasta} " +
         ("-hap_tsv {input.haplo_table} " if (config["use_ProHap"] or (config['use_ProVar'] and config['add_existing_haplo'])) else "") +
         "-db {input.annot} -o {output.fasta} -header {output.header}"
