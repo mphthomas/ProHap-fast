@@ -517,7 +517,9 @@ def process_haplotypes(all_transcripts, genes_haplo_df, all_cdnas, annotations_d
         else:
             result_table = [ haplotype for haplotype in local_result_data.values() if (haplotype[-5] >= min_count) ]
 
-        included_haplotype_ids = [ haplotype[3] for haplotype in result_table ]
+        # set (not list) - used only for membership tests below, and a transcript
+        # can carry very many haplotypes when the cohort is large
+        included_haplotype_ids = { haplotype[3] for haplotype in result_table }
 
         # remove haplotypes below threshold from the FASTA header data 
         for seq in local_result_protein_sequences:

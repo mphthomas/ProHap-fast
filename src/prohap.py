@@ -134,7 +134,9 @@ print (('Chr ' + args.chromosome + ':'), 'Assigning variants to transcripts.')
 vcf_colnames = parse_vcf(all_transcripts, args.input_vcf, annotations_db, args.min_af, args.tmp_dir)
 
 # keep only the samples that are in the metadata table
-sample_ids = [sample for sample in vcf_colnames if (sample in samples_df['Sample name'].tolist())]
+# (set lookup - the VCF can have tens of thousands of sample columns)
+metadata_sample_names = set(samples_df['Sample name'])
+sample_ids = [sample for sample in vcf_colnames if (sample in metadata_sample_names)]
 
 # check if the vcf file was empty
 if (len(vcf_colnames) == 0):
