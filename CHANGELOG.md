@@ -30,5 +30,11 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   - Only `samples` changes: in the sample-ID table written next to `haplo_table_file`
     (`<name>_sampleIDs.tsv[.gz]` for `<name>.tsv[.gz]`), and in the intermediate tables `haplo_chr<chr>.tsv.gz`
     and `haplo_all.tsv.gz`. `haplo_table_file` has no `samples` column. Nothing else in the output changes.
+- **A chromosome with no variants after filtering gets valid gzip files.** When a chromosome's filtered VCF has no
+  records (for example, no variant passes `phased_min_af`), ProHap writes an empty haplotype table and protein
+  FASTA for it. Upstream wrote them as plain text even when the file name ends in `.gz`, which the per-chromosome
+  table's name always does, so the merge step stopped with `BadGzipFile`. They are now gzip-compressed when the
+  name ends in `.gz`: the table holds only the header line and the FASTA is empty. Names without `.gz` are written
+  as before. As upstream, no cDNA FASTA is written for such a chromosome.
 
 [Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/cafcc51...HEAD

@@ -1,4 +1,5 @@
 import re
+import gzip
 from multiprocessing import Pool
 import pandas as pd
 import bisect
@@ -33,11 +34,14 @@ result_columns = [
 
 # create dummy empty files in case of empty input
 def empty_output(output_file, output_fasta):
-    outfile = open(output_file, 'w')
+    # honour the .gz suffix: these paths are named by the Snakefile, which
+    # decides on gzip from the config, and the downstream merge rules infer
+    # compression from the same name
+    outfile = gzip.open(output_file, 'wt') if output_file.endswith('.gz') else open(output_file, 'w')
     outfile.write('\t'.join(result_columns) + '\n')
     outfile.close()
 
-    outfile = open(output_fasta, 'w')
+    outfile = gzip.open(output_fasta, 'wt') if output_fasta.endswith('.gz') else open(output_fasta, 'w')
     outfile.close()
 
 # check if a protein variant maps to the UTR or not
