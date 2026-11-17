@@ -1,0 +1,95 @@
+# ProHap configuration template for an air-gapped TRE run.
+#
+# Place this file as config.yaml in the directory you run from. That directory
+# becomes the working directory: it holds the cached Ensembl references and
+# gffutils databases, plus intermediates and logs. Keep it between runs -
+# rebuilding the GTF databases is the most expensive part of the setup.
+#
+# Paths marked <<< EDIT >>> must be changed. Absolute paths may point anywhere
+# that is bind-mounted into the container; relative paths resolve inside the
+# working directory.
+
+# ---------------- Global parameters ----------------
+
+# Must match the ENSEMBL_RELEASE the image was built with, or the workflow will
+# try to download the missing release and fail with no network.
+Ensembl_FTP_URL: ftp.ensembl.org/pub/release-113/
+annotationFilename: Homo_sapiens.GRCh38.113.chr_patch_hapl_scaff
+ensembl_release: 113
+
+chromosomes: [ "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "X" ]
+
+# Shipped inside the image; the working directory has no copy of the repo.
+contaminants_fasta: "/opt/prohap/crap.fasta"
+
+# Cached in the working directory, generated on the first run.
+custom_transcript_list: "data/transcripts_reference_113.csv"
+included_transcript_biotypes: ""
+only_MANE_select: True
+
+# Must NOT end in .gz: rule all derives the simplified-FASTA name by stripping a
+# single extension, while simpify_fasta_headers strips two for gzipped names, so
+# a .gz value here asks for a file no rule produces. The other outputs below
+# handle .gz correctly.
+final_fasta_file: "/results/prohap/cohort_concatenated_database.fa"      # <<< EDIT
+fasta_simplify_headers: True
+
+# ---------------- ProHap parameters ----------------
+use_ProHap: True
+
+# Leave the FTP URL empty so the download rule is never selected.
+phased_FTP_URL: ""
+phased_local_path: "/data/phased_vcfs/"                                  # <<< EDIT
+phased_vcf_file_name: "chr{chr}_cohort_phased.vcf.gz"                    # <<< EDIT
+# {chr} is substituted per chromosome and the result is globbed, so several
+# files per chromosome are fine. It is the ONLY brace expression allowed in
+# these two values.
+
+# Must list every sample in the VCF. Samples absent from this file are silently
+# dropped from the analysis and from all frequency calculations. Required
+# columns: "Sample name", "Sex" (value "male" for males), "Population code",
+# "Superpopulation code".
+sample_metadata_file: "/data/prohap/cohort_samples.tsv"                  # <<< EDIT
+
+working_dir_name_haplo: haplotypes_tmp
+
+phased_min_af: 0.01
+phased_af_field: AF
+
+# With a large cohort, keeping every private haplotype produces a database too
+# large to search. Note the semantics: the count threshold applies only when
+# haplo_min_freq is -1; any other value selects frequency thresholding instead.
+haplo_min_freq: -1
+haplo_min_count: 10
+
+x_par1_to: 2781479
+x_par2_from: 155701383
+
+haplo_require_start: 1
+haplo_ignore_UTR: 1
+haplo_skip_start_lost: 1
+
+# Threads per chromosome job. Total concurrency is snakemake --cores divided by
+# this, so it also controls how many chromosomes run at once - and peak memory
+# scales with that, not with this number.
+max_cores: 4
+
+haplo_fasta_file: "/results/prohap/cohort_haplotype_translations.fa.gz"  # <<< EDIT
+haplo_cdna_file: ""
+haplo_table_file: "/results/prohap/cohort_haplotypes.tsv.gz"             # <<< EDIT
+
+# ---------------- ProVar parameters ----------------
+use_ProVar: False
+variant_vcf: {}
+
+working_dir_name_var: variants_tmp
+
+var_require_start: 1
+
+var_fasta_file: ""
+var_cdna_file: ""
+var_table_file: ""
+
+add_existing_haplo: False
+haplo_added_table: ""
+haplo_added_fasta: ""

@@ -59,6 +59,85 @@ conda activate snakemake ;
 snakemake --cores 4 -p --use-conda ;
 ```
 
+## Air-gapped / TRE usage (Singularity, no internet)
+
+A `Dockerfile` is provided for running ProHap inside a Trusted Research Environment that has Singularity but no internet access. The image bundles Snakemake, every Python dependency from `envs/prohap.yaml`, and a full set of Ensembl GRCh38 reference files (GTF, cDNA, ncRNA, protein FASTA) so that no `download_*` rule ever tries to reach the network.
+
+The container never writes anything of its own into your directories: no symlinks back into the image, no copies of the repository. Every file a run produces is a real file, readable on the host after the container exits.
+
+### 1. Build the image
+
+On any internet-connected host. On Apple Silicon Macs, pin the platform to `linux/amd64` (emulated via QEMU — the build takes 20–40 minutes):
+
+```
+docker buildx build --platform=linux/amd64 -t <yourname>/prohap:<tag> --load .
+```
+
+The Ensembl release defaults to **113**. To build against a different release:
+
+```
+docker buildx build --platform=linux/amd64 --build-arg ENSEMBL_RELEASE=114 \
+  -t <yourname>/prohap:114 --load .
+```
+
+> The release baked into the image **must** match `ensembl_release` and `annotationFilename` in your `config.yaml`. If they disagree, the workflow tries to download the release it is missing and fails with no network. The entrypoint warns about the most common form of this mismatch before Snakemake starts.
+
+### 2. Transfer the image into the TRE
+
+Pick whichever the TRE ingress supports:
+
+- **Docker Hub:** `docker push <yourname>/prohap:<tag>`, then inside the TRE `singularity build prohap.sif docker://<yourname>/prohap:<tag>`.
+- **Single file:** `docker save <yourname>/prohap:<tag> | gzip > prohap.tar.gz`, transfer, then inside the TRE `singularity build prohap.sif docker-archive:prohap.tar.gz`.
+
+### 3. Set up a working directory
+
+The directory you run from is the working directory. It holds `config.yaml`, the cached references and gffutils databases, and the intermediates and logs. **Keep it between runs** — parsing the GTF into gffutils databases is by far the most expensive setup step, and a warm cache skips it entirely.
+
+Copy `config_tre_template.yaml` to `config.yaml` in that directory and edit the paths marked `<<< EDIT >>>`. Input VCFs and outputs can live anywhere that is bind-mounted; refer to them by their ordinary paths.
+
+### 4. Run
+
+```
+cd /scratch/prohap_run                       # contains config.yaml
+singularity run \
+  --bind /data/phased_vcfs \
+  --bind /results/prohap \
+  prohap.sif snakemake --cores 16 -p
+```
+
+Singularity bind-mounts your current directory and starts the container in it, so the working directory needs no explicit flag. Bind any other path your `config.yaml` refers to. Run with no arguments for a dry run.
+
+Overridable via the environment, though rarely needed:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PROHAP_WORK` | current directory | working directory / cache |
+| `PROHAP_REFS` | `/opt/prohap/refs` | gzipped reference store |
+| `PYTHONHASHSEED` | `0` (set in the image) | keeps FASTA record order reproducible |
+
+The config is always `config.yaml` inside the working directory.
+
+Use `singularity run ... prohap.sif shell` to get a shell inside the image for debugging.
+
+### Sizing a large cohort
+
+Cores and memory are set by how many chromosomes run at once, which is `snakemake --cores` divided by `max_cores` in the config. The heaviest per-chromosome steps (`vcf_filter_fix.py`, and VCF parsing inside `prohap.py`) are single-threaded, so parallelism *across* chromosomes matters more than threads within one.
+
+For a cohort of ~27,000 samples, one VCF per chromosome, as a starting point:
+
+| Resource | Suggested | Notes |
+| --- | --- | --- |
+| Cores | 16–24 | with `max_cores: 4`, four chromosomes in flight |
+| Memory | 128 GB | chr1/chr2 peak roughly 10–20 GB each; small chromosomes 2–5 GB |
+| Scratch | 300–500 GB | per-transcript TSVs carry every sample column, and are only cleaned up when their chromosome finishes |
+
+Memory is dominated by the per-haplotype sample lists, so it scales with the number of concurrent chromosomes rather than with `max_cores`. Run one chromosome first (`chromosomes: [ "22" ]`) and measure before committing to a genome-wide run.
+
+Two config settings matter disproportionately at this scale:
+
+- `phased_min_af` controls how many variants survive, and therefore almost everything downstream.
+- `haplo_min_count` only takes effect when `haplo_min_freq` is `-1`. Leaving `haplo_min_freq: 0` keeps every private haplotype, which at cohort scale produces a database too large to search.
+
 ## Using the database for proteomic searches
 Once you obtain a list of peptide-spectrum matches (PSMs), you can use a pipeline provided in the [PeptideAnnotator](https://github.com/ProGenNo/ProHap_PeptideAnnotator) repository to map the peptides back to the respective protein haplotype / variant sequences, and map the identified variants back to their genetic origin. For the usage and details, please refer to the following [wiki page](https://github.com/ProGenNo/ProHap/wiki/Using-the-database-for-proteomic-searches).
 
