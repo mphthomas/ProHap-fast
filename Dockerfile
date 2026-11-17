@@ -44,14 +44,25 @@ RUN apt-get update \
  && chmod 0777 /prohap/work
 USER $MAMBA_USER
 
-# Runtime environment. Snakemake is pinned: v8+ reworked the executor and
-# conda-deployment flags, and this workflow is written against v7 semantics.
-COPY --chown=$MAMBA_USER:$MAMBA_USER envs/prohap.yaml /tmp/env.yaml
-RUN micromamba create -y -n ProHap -f /tmp/env.yaml \
- && micromamba install -y -n ProHap -c conda-forge -c bioconda \
-      "snakemake-minimal=${SNAKEMAKE_VERSION}" pyyaml \
- && micromamba clean -a -y \
- && rm /tmp/env.yaml
+# Runtime environment, installed from the locks for the target platform. envs/prohap.yaml lists the pinned
+# versions (those of the TRE image that produced the reference runs) and envs/update_locks.sh regenerates the
+# locks. Snakemake is pinned there: v8+ reworked the executor and conda-deployment flags, and this workflow is
+# written against v7 semantics; the test keeps the snakemake_version label honest.
+ARG TARGETARCH
+COPY --chown=$MAMBA_USER:$MAMBA_USER envs/prohap.linux-64.lock envs/prohap.linux-aarch64.lock envs/prohap.pip.lock \
+     /tmp/envs/
+RUN set -eux; \
+    case "$TARGETARCH" in \
+        amd64) subdir=linux-64 ;; \
+        arm64) subdir=linux-aarch64 ;; \
+        *) echo "no lock for architecture $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    micromamba create -y -n ProHap -f "/tmp/envs/prohap.$subdir.lock"; \
+    micromamba run -n ProHap python -m pip install --no-deps --only-binary=:all: --no-cache-dir \
+        --require-hashes -r /tmp/envs/prohap.pip.lock; \
+    test "$(micromamba run -n ProHap snakemake --version)" = "$SNAKEMAKE_VERSION"; \
+    micromamba clean -a -y; \
+    rm -rf /tmp/envs
 
 USER root
 
@@ -87,11 +98,20 @@ USER $MAMBA_USER
 # sequence, and string hashing is randomised per process, so record order and
 # the enshap_* accession numbering vary between otherwise identical runs. The
 # content is unaffected, but pinning the seed makes a run byte-reproducible.
+#
+# LD_LIBRARY_PATH: pandas and pyarrow are pip wheels, and their C++ extensions find libstdc++ through the system
+# search path. On linux/arm64 that loads the base image's older copy first, and the environment's ICU (loaded by
+# sqlite3, so by gffutils) then fails to import. On linux/amd64 numpy already loads the environment's copy, so this
+# changes nothing there. The entrypoint sets it again, because Singularity does not reliably pass ENV through.
 ENV ENSEMBL_RELEASE=${ENSEMBL_RELEASE} \
     PATH=/opt/conda/envs/ProHap/bin:$PATH \
+    LD_LIBRARY_PATH=/opt/conda/envs/ProHap/lib \
     PROHAP_HOME=/opt/prohap \
     PROHAP_REFS=/opt/prohap/refs \
     PYTHONHASHSEED=0
+
+# Fail the build, not a run, if the environment cannot load what the workflow imports.
+RUN python -c "import pandas, sqlite3, gffutils, Bio, vcf, yaml, pyarrow" && bcftools --version > /dev/null
 
 LABEL org.opencontainers.image.title="ProHap" \
       org.opencontainers.image.description="ProHap/ProVar protein haplotype database builder, packaged for air-gapped TREs" \

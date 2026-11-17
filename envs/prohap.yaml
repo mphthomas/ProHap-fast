@@ -1,16 +1,37 @@
+# Runtime environment of ProHap-fast.
+#
+# Versions are those of the TRE image mphthomas/prohap:v0.4-ens113, which produced the reference runs. The
+# reference implementation's output depends on pandas internals, so change a version only together with a full
+# run of the identity tests. bcftools and htslib are for `verify` (sample subsetting) and region streaming. The
+# upstream file's `pip: argparse` is gone: the TRE image had it, but Python always imports the standard library's.
+#
+# Only the Linux builds reproduce TRE output exactly. The macOS pandas wheel parses some 17-digit floats differently
+# (e.g. rare frequencies such as 1.8032476490158774e-05), so the legacy merge rewrites them differently on a Mac:
+# compare Mac output only with other Mac output, never with TRE results or golden checksums.
+#
+# The images install from locks generated from this file by update_locks.sh, which pin every package build:
+#   prohap.linux-64.lock, prohap.linux-aarch64.lock, prohap.osx-arm64.lock   conda packages (explicit, md5)
+#   prohap.pip.lock                                                          pip packages (sha256, all three)
 name: ProHap
 channels:
-  - bioconda
   - conda-forge
-  - anaconda
+  - bioconda
 dependencies:
-  - python=3.10
-  - numpy
-  - biopython
-  - gffutils
+  - python=3.10.20
+  - numpy=2.2.6
+  - biopython=1.88
+  - gffutils=0.14
+  - pyfaidx=0.9.0.4
+  - simplejson=4.1.1
+  - pyvcf3=1.0.4
+  - pyyaml=6.0.3
+  - snakemake-minimal=7.32.4
+  - bcftools=1.25
+  - htslib=1.25
   - pip
   - pip:
-    - pandas
-    - argparse
-    - pyvcf3
-    - pyarrow
+    - pandas==2.3.3
+    - pyarrow==25.0.1
+    - python-dateutil==2.9.0.post0
+    - pytz==2026.3.post1
+    - tzdata==2026.3

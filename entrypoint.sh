@@ -34,6 +34,9 @@ PROHAP_REFS="${PROHAP_REFS:-${PROHAP_HOME}/refs}"
 # Singularity does not reliably propagate the image's ENV, so do not depend on
 # PATH having survived the transition from Docker.
 export PATH="/opt/conda/envs/ProHap/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+# pandas and pyarrow are pip wheels: their C++ extensions must load the environment's libstdc++, not the image's
+# older system copy, or on linux/arm64 importing gffutils (sqlite3, then ICU) after pandas fails.
+export LD_LIBRARY_PATH="/opt/conda/envs/ProHap/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 die() { echo "[prohap] ERROR: $*" >&2; exit 1; }
 log() { echo "[prohap] $*"; }
