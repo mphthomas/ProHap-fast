@@ -3,7 +3,8 @@ when the fast arm's code changes one character of an output.
 
     PROHAP_REFS=~/prohap-refs pytest tests/test_identity.py
 
-The two full 1kG fixtures take about 7 minutes each on 4 cores, the subset and negative tests about a minute each.
+About 3 minutes in all on 4 cores. tests/legacy_vs_fast.sh is the quicker check of src/ against legacy/src on the
+same fixtures; this module tests verify, the user-facing check.
 Needs the ProHap environment and the pre-built references of release 113 ($PROHAP_REFS/ensembl.v113, else
 /opt/prohap/refs/ensembl.v113); skipped without them. VERIFY_CORES sets the cores for each run (default 4).
 
@@ -36,12 +37,12 @@ if not (REFS / 'ensembl.v113' / 'release.txt').exists():
 
 @pytest.fixture(scope='module')
 def sample_data(tmp_path_factory):
-    """The 1kG VCFs of chromosomes 1 (two chunks), 2, 21, 22 and X, extracted once."""
+    """The 1kG VCFs of chromosomes 1 (two chunks), 21, 22 and X, extracted once."""
     dest = tmp_path_factory.mktemp('sample_data')
-    wanted = re.compile(r'sample_chr(1|2|21|22|X)_1kGP_GRCh38_phased(_2)?\.vcf')
+    wanted = re.compile(r'sample_chr(1|21|22|X)_1kGP_GRCh38_phased(_2)?\.vcf')
     with tarfile.open(TARBALL) as tar:
         members = [m for m in tar.getmembers() if m.isfile() and wanted.fullmatch(m.name)]
-        assert len(members) == 6
+        assert len(members) == 5
         tar.extractall(dest, members=members, filter='data')
     return dest
 
@@ -53,6 +54,7 @@ def workdir(tmp_path, sample_data, fixture, **overrides):
     (work / 'sample_data').symlink_to(sample_data)
     (work / 'igsr_samples.tsv').symlink_to(ROOT / 'igsr_samples.tsv')
     (work / 'crap.fasta').symlink_to(ROOT / 'crap.fasta')
+    (work / 'transcripts.csv').symlink_to(FIXTURES / 'transcripts.csv')
     text = (FIXTURES / (fixture + '.yaml')).read_text()
     if overrides:
         cfg = yaml.safe_load(text)

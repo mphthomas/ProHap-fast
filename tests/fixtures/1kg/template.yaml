@@ -1,20 +1,22 @@
 # 1kG fixture with the settings of config_tre_template.yaml: haplotypes seen at least 10 times, 4 threads per
 # chromosome, gzipped haplotype table and FASTA, no cDNA FASTA.
 #
-# tests/test_identity.py copies this file to config.yaml in a work directory that holds sample_data/ (chr2, 21, 22
-# and X from sample_data/sample_1kGP_common_global.tar.gz), igsr_samples.tsv and crap.fasta, and runs verify there.
-# References come from $PROHAP_REFS (refs_dir is empty).
+# Run by tests/legacy_vs_fast.sh and tests/test_identity.py in a work directory that holds sample_data/ (the VCFs of
+# chromosomes 1, 21, 22 and X from sample_data/sample_1kGP_common_global.tar.gz), igsr_samples.tsv, crap.fasta and
+# transcripts.csv. References come from $PROHAP_REFS (refs_dir is empty).
 
 implementation: fast
 ensembl_release: 113
 refs_dir: ""
 
-chromosomes: ["2", "21", "22", "X"]
+chromosomes: ["1", "21", "22", "X"]
 
 contaminants_fasta: "crap.fasta"
 
 included_transcript_biotypes: ""
 only_MANE_select: True
+# 109 of the MANE Select transcripts of these chromosomes (make_transcripts.py)
+custom_transcript_list: "transcripts.csv"
 
 final_fasta_file: "results/1kg_concatenated_database.fa"
 fasta_simplify_headers: True

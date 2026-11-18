@@ -79,6 +79,31 @@ carries the time it was written; decompressed it is identical too.
 
 ---
 
+## Checking `src/` against `legacy/src`
+
+`tests/legacy_vs_fast.sh` is the check every change to `src/` must pass. It runs on the host, in the ProHap
+environment, with no container. For each 1kG fixture config it runs the workflow twice on the same inputs, once
+with `--config implementation=legacy` and once with `--config implementation=fast`, each in its own work directory
+(switching `implementation` in place reruns nothing). Then it compares every file under the two directories, except
+`.snakemake/`, after decompression. A file that is gzip in one run and plain in the other is DIFFERENT.
+
+The fixture keeps only 109 transcripts (`tests/fixtures/1kg/make_transcripts.py`), because the reference costs
+about 0.1 s of CPU per transcript at 2,548 samples whether the transcript has variants or not. For every transcript,
+`parse_vcf` writes a table with one column per sample, and `get_gene_haplotypes` reads it back. Measured
+2026-11-18 on the Mac, legacy arm, threshold 0, 4 threads, 4 cores:
+
+| Data | Wall time per run |
+| --- | --- |
+| chromosomes 1, 21, 22, X, all 3,647 MANE transcripts | 362 s (chr1 194 s, X 79 s with its 7 records) |
+| chromosome 22 alone, 495 transcripts, 1 thread | 75 s (prohap 68 s) |
+| 109 transcripts (a draft of the fixture's list), 4 cores | 42 s; the 12 s of cleaning the reference proteome held back the 4-thread prohap jobs |
+
+With `-j 8` both fixture configs take 1 min 35 s for the four runs: 19–20 s per threshold0 run and 24–25 s per
+template run. The floor is the steps every run repeats: `reference_remove_stop` (12 s), then mixing with the
+reference proteome, `merge_duplicate_seq` and `fasta_simplify_headers` (about 5 s).
+
+---
+
 ## 1. Quick wins on the legacy code (P1–P4, D3): exact, small
 
 Apply to a copy of `legacy/src` to make the first `src/`. All five were verified byte-identical.
