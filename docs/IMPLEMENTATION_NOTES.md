@@ -44,6 +44,24 @@ region streaming.
 
 ---
 
+## Pre-built references
+
+`container/prebuild_refs.py` turns the four Ensembl downloads of a release (GTF `chr_patch_hapl_scaff`, cDNA, ncRNA,
+pep) and `crap.fasta` into `<refs>/ensembl.v<rel>/`: the whole-genome gffutils DB, one DB per chromosome (1–22, X,
+Y, MT), the MANE list `transcripts_reference_<rel>.csv`, `total_cdnas_<rel>.fa`, the tagged proteome and the tagged
+contaminants, plus `release.txt`, `SOURCES.sha256` (the inputs) and `MANIFEST.sha256` (`sha256sum -c`). It runs the
+`legacy/src` scripts with the arguments of the upstream rules it replaces (`parse_gtf_whole`, `split_gtf` +
+`parse_gtf_chromosome`, `merge_cdnas_fasta`, `reference_filter_format`, `default_transcript_list` with -MANE 1,
+`contaminants_fix_headers`), in parallel, and renames `ensembl.v<rel>.partial/` into place only when every step
+has passed.
+
+Measured 2026-11-18 on the Mac, v113, 8 jobs: 156 s wall (whole-genome DB 141 s, then the MANE list 11.8 s; the 25
+chromosome DBs, 0.1–12 s each, run beside it), 0.37 GB peak RSS, 8.17 GB on disk. Every file is byte-identical to
+what the M1 workflow built in its work directory from the same downloads with the same environment, the DBs
+included; DBs built with another SQLite differ only in the version field of the header (offset 96).
+
+---
+
 ## 1. Quick wins on the legacy code (P1–P4, D3): exact, small
 
 Apply to a copy of `legacy/src` to make the first `src/`. All five were verified byte-identical.
