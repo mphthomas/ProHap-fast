@@ -1,6 +1,6 @@
 # The Dockerfile COPYs only the paths it needs, so this list exists to keep the
 # build context small and to make sure nothing large or stateful is ever sent to
-# the daemon.
+# the daemon. Patterns without **/ match only at the top of the context.
 .git/
 .github/
 .claude/
@@ -9,8 +9,12 @@
 .idea/
 
 # Working state and outputs from local runs. testrun/ in particular contains
-# dangling symlinks left by earlier versions of the entrypoint.
+# dangling symlinks left by earlier versions of the entrypoint. .home/ and .cache/
+# are what the entrypoint creates in a work directory whose HOME is not writable.
 testrun/
+verify_runs/
+.home/
+.cache/
 data/
 results/
 tmp/
@@ -19,13 +23,14 @@ backup/
 docs/
 peptide_annotation/
 sample_data/
+tests/
 
 # Build artifacts and transfer archives
 *.sif
 *.tar
 *.tar.gz
-*.pyc
-__pycache__/
+**/*.pyc
+**/__pycache__/
 
 # Run-specific configuration is always supplied at run time, never baked in
 config.yaml

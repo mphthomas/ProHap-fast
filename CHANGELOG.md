@@ -17,6 +17,12 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   `implementation: fast`, each in its own work directory under `verify_runs/`, and compares every output byte for
   byte after decompression. It can restrict both runs to some chromosomes, samples or transcripts, checks the VCFs
   before it starts, and exits with status 0 only when every output is identical. See `verify/README.md`.
+- **One image per Ensembl release, with every reference pre-built.** `container/build_image.sh` builds
+  `prohap-fast:<version>-ensembl.v<release>` for `linux/amd64` and `linux/arm64`: the workflow, both
+  implementations, `verify`, the locked environment and `ensembl.v<release>/` from `container/prebuild_refs.py`
+  under `/opt/prohap/refs`. The Ensembl files are downloaded while the image is built, never when it runs. The
+  version is in the new `VERSION` file and, with the release, the commit and the build date, in the image's labels.
+  The image is about 9 GB.
 
 ### Changed
 

@@ -60,6 +60,23 @@ chromosome DBs, 0.1–12 s each, run beside it), 0.37 GB peak RSS, 8.17 GB on di
 what the M1 workflow built in its work directory from the same downloads with the same environment, the DBs
 included; DBs built with another SQLite differ only in the version field of the header (offset 96).
 
+### In the release image
+
+The Dockerfile downloads the four Ensembl files and runs `prebuild_refs.py` in stages pinned to the build platform
+(`FROM --platform=$BUILDPLATFORM`), so the references are built natively once and the image of the other platform
+copies the same layer from the build cache. The prebuild stage's environment is the runtime environment built from
+the same locks by the same command (`container/install_env.sh` picks the lock from `uname -m`), so the two are one
+set of layers when build and target platform agree. Trap: a stage `FROM <another stage>` takes its files from that
+stage but its platform from its own FROM line, which defaults to the target platform; without an explicit
+`--platform=$BUILDPLATFORM` there, each target platform reran the prebuild as its own cache entry.
+
+Measured 2026-11-18 on the Mac (Docker Desktop, 16 CPUs, 7.7 GB VM; `linux/amd64` through Rosetta): the first
+build of `linux/arm64`, with nothing cached but the base images, took 522 s, of which the prebuild took 336 s
+(8 jobs; the whole-genome DB 182 s). Image size 9.00 GB (`linux/arm64`) and 9.05 GB (`linux/amd64`), of which the
+references are 8.17 GB; the M1 image `prohap-fast:m1.8` was 2.31 / 2.47 GB. The references built in the image (Linux, aarch64) are
+byte-identical to those built natively on the Mac (`MANIFEST.sha256`), except `crap_tagged.fa.gz`, whose gzip header
+carries the time it was written; decompressed it is identical too.
+
 ---
 
 ## 1. Quick wins on the legacy code (P1–P4, D3): exact, small
