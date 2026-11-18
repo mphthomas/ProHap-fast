@@ -1,0 +1,57 @@
+# 1kG fixture with the settings of config_tre_template.yaml: haplotypes seen at least 10 times, 4 threads per
+# chromosome, gzipped haplotype table and FASTA, no cDNA FASTA.
+#
+# tests/test_identity.py copies this file to config.yaml in a work directory that holds sample_data/ (chr2, 21, 22
+# and X from sample_data/sample_1kGP_common_global.tar.gz), igsr_samples.tsv and crap.fasta, and runs verify there.
+# References come from $PROHAP_REFS (refs_dir is empty).
+
+implementation: fast
+ensembl_release: 113
+refs_dir: ""
+
+chromosomes: ["2", "21", "22", "X"]
+
+contaminants_fasta: "crap.fasta"
+
+included_transcript_biotypes: ""
+only_MANE_select: True
+
+final_fasta_file: "results/1kg_concatenated_database.fa"
+fasta_simplify_headers: True
+
+use_ProHap: True
+
+phased_local_path: "sample_data/"
+phased_vcf_file_name: "sample_chr{chr}_1kGP_GRCh38_phased*.vcf"
+sample_metadata_file: "igsr_samples.tsv"
+
+working_dir_name_haplo: haplotypes_tmp
+
+phased_min_af: 0.01
+phased_af_field: AF
+haplo_min_freq: -1
+haplo_min_count: 10
+
+x_par1_to: 2781479
+x_par2_from: 155701383
+
+haplo_require_start: 1
+haplo_ignore_UTR: 1
+haplo_skip_start_lost: 1
+max_cores: 4
+
+haplo_fasta_file: "results/1kg_haplotype_translations.fa.gz"
+haplo_cdna_file: ""
+haplo_table_file: "results/1kg_haplotypes.tsv.gz"
+
+use_ProVar: False
+variant_vcf: {}
+working_dir_name_var: variants_tmp
+var_require_start: 1
+var_fasta_file: ""
+var_cdna_file: ""
+var_table_file: ""
+
+add_existing_haplo: False
+haplo_added_table: ""
+haplo_added_fasta: ""
