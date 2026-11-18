@@ -1,0 +1,55 @@
+# Unit tests and the legacy-frozen check: pytest over tests/, in the locked ProHap environment, without the image or
+# the pre-built references. tests/test_identity.py skips itself without references.
+name: unit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PYTHONHASHSEED: '0'
+      PYTHONNOUSERSITE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # tests/test_legacy_frozen.py rebuilds legacy/src from upstream commit cafcc51, so it needs the history
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install micromamba 1.5.10 (the version of the image's base)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/micromamba" \
+            https://github.com/mamba-org/micromamba-releases/releases/download/1.5.10-0/micromamba-linux-64
+          echo "80057e007579d482a39dc283dd3e725503e34da7e7c51844957164511cdb917b  $RUNNER_TEMP/bin/micromamba" \
+            | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/bin/micromamba"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          echo "MAMBA_ROOT_PREFIX=$RUNNER_TEMP/mamba" >> "$GITHUB_ENV"
+
+      - name: Create the ProHap environment from the locks, as the image does
+        run: |
+          bash container/install_env.sh envs "$(sed -n 's/^ARG SNAKEMAKE_VERSION=//p' Dockerfile)"
+          echo "$MAMBA_ROOT_PREFIX/envs/ProHap/bin" >> "$GITHUB_PATH"
+
+      - name: Install pytest
+        run: |
+          python -m pip install --no-deps --only-binary=:all: --no-cache-dir --require-hashes -r envs/test.pip.lock
+
+      - name: pytest
+        run: |
+          test "$(command -v python)" = "$MAMBA_ROOT_PREFIX/envs/ProHap/bin/python"
+          python -m pytest tests/ -v -rs
