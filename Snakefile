@@ -1,6 +1,10 @@
+import hashlib
 import os
+import re
 import shlex
 import sys
+
+from snakemake.exceptions import WorkflowError
 
 configfile: "config.yaml"
 
@@ -32,6 +36,135 @@ shell.prefix("set -euo pipefail; export PYTHONHASHSEED=0 PYTHONNOUSERSITE=1; ")
 VARIANT_VCF_FILES = config['variant_vcf']
 CHROMOSOMES = config['chromosomes']
 
+# ------------------------------------ references ------------------------------------
+# Everything derived from the Ensembl release is pre-built once by container/prebuild_refs.py into
+# <refs_dir>/ensembl.v<release>/ and read from there by both arms: nothing is downloaded and nothing is copied into
+# the work directory. ensembl_release is the only release setting; the annotation name and the reference transcript
+# list follow from it.
+ENSEMBL_RELEASE = str(config['ensembl_release'])
+ANNOTATION = 'Homo_sapiens.GRCh38.' + ENSEMBL_RELEASE + '.chr_patch_hapl_scaff'
+REFS_ROOT = os.path.abspath(os.path.expanduser(str(config.get('refs_dir') or os.environ.get('PROHAP_REFS') or '/opt/prohap/refs')))
+REFS = os.path.join(REFS_ROOT, 'ensembl.v' + ENSEMBL_RELEASE)
+# Set in the release image; names the release whose references the image carries.
+IMAGE_RELEASE = os.environ.get('ENSEMBL_RELEASE', '')
+
+def config_error(message):
+    where = ('This image carries the references of Ensembl release ' + IMAGE_RELEASE + '.') if IMAGE_RELEASE \
+        else 'ENSEMBL_RELEASE is not set, so this is not running in a prohap-fast image.'
+    raise WorkflowError(message + '\n' + where)
+
+def config_warning(message):
+    print('ProHap-fast config warning: ' + message, file=sys.stderr)
+
+if not re.fullmatch(r'[0-9]+', ENSEMBL_RELEASE):
+    config_error("config 'ensembl_release' must be a release number such as 113, not " + repr(config['ensembl_release']))
+if re.search(r'[^\w./+@%:,=-]', REFS):
+    config_error("the references directory " + repr(REFS) + " (config 'refs_dir', else $PROHAP_REFS) contains a space or "
+                 "a shell character; use a path without them")
+
+# Upstream release and download settings. References now come only from REFS, so these do nothing: accepted with a
+# warning while they agree with ensembl_release, an error when they name something else.
+_ftp_url = str(config.get('Ensembl_FTP_URL') or '')
+if _ftp_url:
+    if re.findall(r'release-([0-9]+)', _ftp_url) != [ENSEMBL_RELEASE] or 'grch37' in _ftp_url.lower():
+        config_error("config 'Ensembl_FTP_URL' is " + repr(_ftp_url) + ", which does not name GRCh38 release "
+                     + ENSEMBL_RELEASE + " of config 'ensembl_release'. ProHap-fast downloads nothing: delete "
+                     "'Ensembl_FTP_URL' and set 'ensembl_release' to the release you want.")
+    config_warning("'Ensembl_FTP_URL' is ignored; the release " + ENSEMBL_RELEASE + " references are read from " + REFS
+                   + ". Delete the line.")
+_annotation = str(config.get('annotationFilename') or '')
+if _annotation:
+    if _annotation != ANNOTATION:
+        config_error("config 'annotationFilename' is " + repr(_annotation) + ", but config 'ensembl_release' "
+                     + ENSEMBL_RELEASE + " means " + repr(ANNOTATION) + ". The annotation follows from "
+                     "'ensembl_release': delete 'annotationFilename'.")
+    config_warning("'annotationFilename' is ignored; it follows from 'ensembl_release'. Delete the line.")
+if str(config.get('phased_FTP_URL') or ''):
+    config_warning("'phased_FTP_URL' is ignored; nothing is downloaded, and the phased VCFs are read from "
+                   "'phased_local_path'. Delete the line.")
+
+def ref(name):
+    return os.path.join(REFS, name)
+
+REF_WHOLE_DB = ref(ANNOTATION + '.db')
+REF_CHR_DB = ref(ANNOTATION + '_chr{chr}.db')
+REF_CDNA = ref('total_cdnas_' + ENSEMBL_RELEASE + '.fa')
+REF_PROTEOME = ref('ensembl_reference_proteinDB_' + ENSEMBL_RELEASE + '_tagged.fa')
+REF_MANE_LIST = ref('transcripts_reference_' + ENSEMBL_RELEASE + '.csv')
+REF_CONTAMINANTS = ref('crap_tagged.fa.gz')
+
+if not os.path.isdir(REFS):
+    _found = sorted(d[len('ensembl.v'):] for d in (os.listdir(REFS_ROOT) if os.path.isdir(REFS_ROOT) else [])
+                    if d.startswith('ensembl.v') and os.path.isdir(os.path.join(REFS_ROOT, d)))
+    config_error("no references for Ensembl release " + ENSEMBL_RELEASE + " (config 'ensembl_release'): " + REFS
+                 + " does not exist. The references directory " + REFS_ROOT + " (config 'refs_dir', else $PROHAP_REFS) "
+                 + ("has release(s) " + ', '.join(_found) if _found else "has none")
+                 + ". Use the image for release " + ENSEMBL_RELEASE + " (prohap-fast:<version>-ensembl.v"
+                 + ENSEMBL_RELEASE + "), or set 'ensembl_release' to the release of your references.")
+try:
+    with open(ref('release.txt')) as _fh:
+        _refs_release = _fh.read().strip()
+except OSError:
+    _refs_release = None
+if _refs_release != ENSEMBL_RELEASE:
+    config_error(ref('release.txt') + (" is missing" if _refs_release is None else " says release " + repr(_refs_release))
+                 + ", but config 'ensembl_release' is " + ENSEMBL_RELEASE + ". Rebuild the directory with "
+                 "container/prebuild_refs.py --release " + ENSEMBL_RELEASE + ".")
+
+# The tagged contaminants in REFS were built from the contaminants FASTA recorded in SOURCES.sha256 (the crap.fasta
+# shipped with ProHap). Any other contaminants_fasta is tagged in the work directory, as upstream did.
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for block in iter(lambda: fh.read(1 << 20), b''):
+            h.update(block)
+    return h.hexdigest()
+
+def _refs_contaminants_sha256():
+    try:
+        with open(ref('SOURCES.sha256')) as fh:
+            entries = [line.rstrip('\n').split('  ', 1) for line in fh]
+    except OSError:
+        return None
+    # every other source is an Ensembl download, named Homo_sapiens.GRCh38.*
+    others = [e[0] for e in entries if len(e) == 2 and not e[1].startswith('Homo_sapiens.GRCh38.')]
+    return others[0] if len(others) == 1 else None
+
+CONTAMINANTS_FASTA = config['contaminants_fasta']
+if not os.path.isfile(CONTAMINANTS_FASTA):
+    config_error("config 'contaminants_fasta' is " + repr(CONTAMINANTS_FASTA) + ", which is not a file")
+TAGGED_CONTAMINANTS = REF_CONTAMINANTS if _sha256(CONTAMINANTS_FASTA) == _refs_contaminants_sha256() \
+    else 'data/fasta/crap_tagged.fa.gz'
+
+# Transcript list. Upstream set custom_transcript_list to data/transcripts_reference_<release>.csv, which the
+# default_transcript_list rule built in the work directory; with only_MANE_select that list is in REFS. An absent
+# custom_transcript_list means the same list; an empty one means every transcript of included_transcript_biotypes,
+# as upstream.
+WORKDIR_REFERENCE_LIST = 'data/transcripts_reference_' + ENSEMBL_RELEASE + '.csv'
+REFERENCE_LIST = REF_MANE_LIST if config['only_MANE_select'] else WORKDIR_REFERENCE_LIST
+if config.get('custom_transcript_list') is None:
+    TRANSCRIPT_LIST = REFERENCE_LIST
+elif len(config['custom_transcript_list']) == 0:
+    TRANSCRIPT_LIST = 'data/included_transcripts.csv'
+elif os.path.normpath(config['custom_transcript_list']) == WORKDIR_REFERENCE_LIST:
+    TRANSCRIPT_LIST = REFERENCE_LIST
+else:
+    TRANSCRIPT_LIST = config['custom_transcript_list']
+
+# Fail at parse time, naming the config key, rather than with Snakemake's MissingInputException.
+_required = [(REF_WHOLE_DB, "'ensembl_release'"), (REF_PROTEOME, "'ensembl_release'")]
+if config['only_MANE_select']:
+    _required.append((REF_MANE_LIST, "'only_MANE_select'"))
+if TAGGED_CONTAMINANTS == REF_CONTAMINANTS:
+    _required.append((REF_CONTAMINANTS, "'contaminants_fasta'"))
+if config['use_ProHap'] or config['use_ProVar']:
+    _required.append((REF_CDNA, "'ensembl_release'"))
+    _required += [(REF_CHR_DB.format(chr=c), "'chromosomes' (chromosome " + str(c) + ")") for c in CHROMOSOMES]
+for _path, _key in _required:
+    if not os.path.isfile(_path):
+        config_error("reference " + _path + " is missing; config " + _key + " needs it. The references for release "
+                     + ENSEMBL_RELEASE + " are incomplete: rebuild them with container/prebuild_refs.py.")
+
 WORKING_DIR_NAME_HAPLO = config['working_dir_name_haplo']
 WORKING_DIR_NAME_VAR = config['working_dir_name_var']
 
@@ -43,33 +176,9 @@ rule all:
         var_fasta=expand('{proxy}', proxy=[config['var_fasta_file']] if config["use_ProVar"] else []),
         haplo_fasta=expand('{proxy}', proxy=[config['haplo_fasta_file']] if config["use_ProHap"] else []),
 
-rule download_vcf:
-    output:
-        temp("data/vcf/phased/" + config['phased_vcf_file_name'])
-    shell:
-        "mkdir -p data/vcf/phased ; "
-        "wget " + config['phased_FTP_URL'] + config['phased_vcf_file_name'].replace('{chr}', '{wildcards.chr}') + " -O {output}"
-
-rule download_gtf:
-    output:
-        temp("data/gtf/" + config['annotationFilename'] + ".gtf")
-    shell:
-        "mkdir -p data/gtf ; "
-        "wget " + config['Ensembl_FTP_URL'] + "gtf/homo_sapiens/" + config['annotationFilename'] + ".gtf.gz -O {output}.gz && gunzip {output}.gz; "
-
-rule parse_gtf_whole:
-    input:
-        "data/gtf/" + config['annotationFilename'] + ".gtf"
-    output:
-        # not temp(): parsing the whole GTF is the most expensive setup step, and the DB is reused across runs
-        "data/gtf/" + config['annotationFilename'] + ".db"
-    conda: "envs/prohap.yaml"
-    shell:
-        script('parse_gtf.py') + " -i {input} -o {output}"
-
 rule get_transcript_list:
     input:
-        "data/gtf/" + config['annotationFilename'] + ".db"
+        REF_WHOLE_DB
     output:
         temp("data/included_transcripts.csv")
     params:
@@ -77,94 +186,43 @@ rule get_transcript_list:
     shell:
         script('get_transcript_list.py') + " -i {input} -bio {params.biotypes} -o {output}"
 
-rule download_cdnas_fasta:
-    output:
-        out1=temp("data/fasta/Homo_sapiens.GRCh38.ncrna.fa"),
-        out2=temp("data/fasta/Homo_sapiens.GRCh38.cdna.all.fa")
-    shell:
-        "mkdir -p data/fasta ; "
-        "wget " + config['Ensembl_FTP_URL'] + "fasta/homo_sapiens/ncrna/Homo_sapiens.GRCh38.ncrna.fa.gz -O {output.out1}.gz && gunzip {output.out1}.gz; "
-        "wget " + config['Ensembl_FTP_URL'] + "fasta/homo_sapiens/cdna/Homo_sapiens.GRCh38.cdna.all.fa.gz -O {output.out2}.gz && gunzip {output.out2}.gz; "
-
-rule merge_cdnas_fasta:
-	input:
-		in1="data/fasta/Homo_sapiens.GRCh38.ncrna.fa",
-		in2="data/fasta/Homo_sapiens.GRCh38.cdna.all.fa"
-	output:
-		"data/fasta/total_cdnas_" + str(config['ensembl_release']) + ".fa"
-	shell:
-		"cat {input.in1} > {output}; cat {input.in2} >> {output}"
-
-rule download_reference_proteome:
-    output:
-        temp("data/fasta/Homo_sapiens.GRCh38.pep.all.fa")
-    shell:
-        "mkdir -p data/fasta ; "
-        "wget " + config['Ensembl_FTP_URL'] + "fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz -O {output}.gz && gunzip {output}.gz; "
-
-rule reference_filter_format:
-    input:
-        "data/fasta/Homo_sapiens.GRCh38.pep.all.fa"
-    output:
-        "data/fasta/ensembl_reference_proteinDB_" + str(config['ensembl_release']) + "_tagged.fa"
-    conda: "envs/prohap.yaml"
-    shell:
-        script('fasta_format_headers.py') + " -i {input} -o {output} -t _ensref -use_ENST 1 "
-
-rule default_transcript_list:
-    input:
-        ref_fasta="data/fasta/ensembl_reference_proteinDB_" + str(config['ensembl_release']) + "_tagged.fa",
-        annot="data/gtf/" + config['annotationFilename'] + ".db"
-    output:
-        # not temp(): reused across runs, and often given directly as custom_transcript_list
-        "data/transcripts_reference_" + str(config['ensembl_release'])  + ".csv"
-    params:
-        MANE=int(config['only_MANE_select'])
-    conda: "envs/prohap.yaml"
-    shell:
-        script('get_reference_ENST.py') + " -i {input.ref_fasta} -annot {input.annot} -MANE {params.MANE} -o {output}"
+# With only_MANE_select the reference transcript list is pre-built in REFS; otherwise it is built here.
+if not config['only_MANE_select']:
+    rule default_transcript_list:
+        input:
+            ref_fasta=REF_PROTEOME,
+            annot=REF_WHOLE_DB
+        output:
+            # not temp(): reused across runs, and often given directly as custom_transcript_list
+            WORKDIR_REFERENCE_LIST
+        params:
+            MANE=int(config['only_MANE_select'])
+        conda: "envs/prohap.yaml"
+        shell:
+            script('get_reference_ENST.py') + " -i {input.ref_fasta} -annot {input.annot} -MANE {params.MANE} -o {output}"
 
 rule reference_remove_stop:
     input:
-        fasta="data/fasta/ensembl_reference_proteinDB_" + str(config['ensembl_release']) + "_tagged.fa",
-        tr=expand('{proxy}', proxy=["data/transcripts_reference_" + str(config['ensembl_release']) + '.csv'] if config['only_MANE_select'] else [])
+        fasta=REF_PROTEOME,
+        tr=expand('{proxy}', proxy=[REF_MANE_LIST] if config['only_MANE_select'] else [])
     output:
-        temp("data/fasta/ensembl_reference_proteinDB_" + str(config['ensembl_release']) + "_clean.fa.gz")
+        temp("data/fasta/ensembl_reference_proteinDB_" + ENSEMBL_RELEASE + "_clean.fa.gz")
     params:
-        tr_filter=('-tr data/transcripts_reference_' + str(config['ensembl_release']) + '.csv') if config['only_MANE_select'] else ''
+        tr_filter=('-tr ' + REF_MANE_LIST) if config['only_MANE_select'] else ''
     conda: "envs/prohap.yaml"
     shell:
         script('remove_stop_codons.py') + " -i {input.fasta} -o {output} -min_len 6 {params.tr_filter} "
 
-rule contaminants_fix_headers:
-    input:
-        config['contaminants_fasta']
-    output:
-        "data/fasta/crap_tagged.fa.gz"
-    conda: "envs/prohap.yaml"
-    shell:
-        script('fasta_format_headers.py') + " -i {input} -o {output} -t _cont"
-
-# filter the GTF so that only features on the desired chromosome are present
-rule split_gtf:
-    input:
-        "data/gtf/" + config['annotationFilename'] + ".gtf"
-    output:
-        temp("data/gtf/" + config['annotationFilename'] + "_chr{chr}.gtf")
-    shell:
-        "grep \"^#\" {input} > {output}; "
-        "grep \"^{wildcards.chr}\s\" {input} >> {output}"
-
-# create the DB files from GTF for each chromosome
-rule parse_gtf_chromosome:
-    input:
-        "data/gtf/" + config['annotationFilename'] + "_chr{chr}.gtf"
-    output:
-        # not temp(): reused across runs, like the whole-genome DB
-        "data/gtf/" + config['annotationFilename'] + "_chr{chr}.db"
-    conda: "envs/prohap.yaml"
-    shell:
-        script('parse_gtf.py') + " -i {input} -o {output}"
+# The pre-built tagged contaminants come from ProHap's crap.fasta; any other contaminants_fasta is tagged here.
+if TAGGED_CONTAMINANTS != REF_CONTAMINANTS:
+    rule contaminants_fix_headers:
+        input:
+            CONTAMINANTS_FASTA
+        output:
+            TAGGED_CONTAMINANTS
+        conda: "envs/prohap.yaml"
+        shell:
+            script('fasta_format_headers.py') + " -i {input} -o {output} -t _cont"
 
 # ------------------------------------ ProVar rules ------------------------------------
 
@@ -181,9 +239,9 @@ rule split_variant_vcf:
 
 rule compute_variants:
     input:
-        db="data/gtf/" + config['annotationFilename'] + "_chr{chr}.db",
-        tr=expand('{proxy}', proxy=[config['custom_transcript_list']] if len(config["custom_transcript_list"]) > 0 else ["data/included_transcripts.csv"]),
-        fasta="data/fasta/total_cdnas_" + str(config['ensembl_release']) + ".fa",
+        db=REF_CHR_DB,
+        tr=TRANSCRIPT_LIST,
+        fasta=REF_CDNA,
         flag="tmp/variants_{vcf}/ready",
     output:
         tsv=temp("results/" + WORKING_DIR_NAME_VAR + "/variants_{vcf}/variants_chr{chr}.tsv.gz"),
@@ -279,10 +337,10 @@ rule filter_phased_vcf:
 
 rule compute_haplotypes:
     input:
-        db="data/gtf/" + config['annotationFilename'] + "_chr{chr}.db",
-        tr=expand('{proxy}', proxy=[config['custom_transcript_list']] if len(config["custom_transcript_list"]) > 0 else ["data/included_transcripts.csv"]),
+        db=REF_CHR_DB,
+        tr=TRANSCRIPT_LIST,
         vcf="data/vcf/phased/chr{chr}_phased_filtered.vcf.gz",
-        fasta="data/fasta/total_cdnas_" + str(config['ensembl_release']) + ".fa",
+        fasta=REF_CDNA,
         samples=config['sample_metadata_file']
     output:
         csv=temp("results/" + WORKING_DIR_NAME_HAPLO + "/haplo_chr{chr}.tsv.gz"),
@@ -366,8 +424,8 @@ rule added_fasta_remove_stop:
 
 rule mix_with_reference_proteome:
     input:
-        in1="data/fasta/ensembl_reference_proteinDB_" + str(config['ensembl_release']) + "_clean.fa.gz",
-        in2="data/fasta/crap_tagged.fa.gz",
+        in1="data/fasta/ensembl_reference_proteinDB_" + ENSEMBL_RELEASE + "_clean.fa.gz",
+        in2=TAGGED_CONTAMINANTS,
         in3=expand('{proxy}', proxy=["results/variants_all_clean.fa.gz"] if config["use_ProVar"] else []),
         in4=expand('{proxy}', proxy=["results/haplo_all_clean.fa.gz"] if config["use_ProHap"] else []),
         in5=expand('{proxy}', proxy=["results/haplo_added_clean.fa.gz"] if config["add_existing_haplo"] else []),
@@ -407,7 +465,7 @@ rule simpify_fasta_headers:
         fasta=config['final_fasta_file'],
         # var_table=expand('{proxy}', proxy=[config['var_table_file']] if config["use_ProVar"] else []), ENST identifiers included in the protein IDs for ProVar - no need to search for them in the TSV
         haplo_table=expand('{proxy}', proxy=[config['haplo_table_file']] if config["use_ProHap"] else ([config['haplo_added_table']] if (config['use_ProVar'] and config['add_existing_haplo']) else [])),
-        annot="data/gtf/" + config['annotationFilename'] + ".db"
+        annot=REF_WHOLE_DB
     output:
         fasta=('.'.join(config['final_fasta_file'].split('.')[:-2]) + '_simplified.fasta.gz') if config['final_fasta_file'].endswith('.gz') else ('.'.join(config['final_fasta_file'].split('.')[:-1]) + '_simplified.fasta'),
         header=('.'.join(config['final_fasta_file'].split('.')[:-2]) + '_header.tsv.gz') if config['final_fasta_file'].endswith('.gz') else ('.'.join(config['final_fasta_file'].split('.')[:-1]) + '_header.tsv')

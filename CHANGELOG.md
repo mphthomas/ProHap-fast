@@ -10,6 +10,23 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 
 ## [Unreleased]
 
+### Changed
+
+- **Ensembl references are pre-built and read in place; nothing is downloaded.** Everything the workflow derives
+  from the Ensembl release (whole-genome and per-chromosome gffutils DBs, the MANE transcript list, the merged cDNA,
+  the tagged reference proteome and the tagged contaminants) is read from `<refs_dir>/ensembl.v<ensembl_release>/`,
+  built once by `container/prebuild_refs.py` and shipped in the release image. `refs_dir` defaults to
+  `$PROHAP_REFS`, then `/opt/prohap/refs`. The rules that downloaded or built these files in the work directory are
+  gone. The output does not change.
+- **`ensembl_release` is the only release setting.** `annotationFilename` follows from it. `Ensembl_FTP_URL`,
+  `annotationFilename` and `phased_FTP_URL` are ignored with a warning when they agree with `ensembl_release`, and
+  stop the run when they name another release or annotation. A missing reference directory, a `release.txt` that
+  disagrees, or a missing chromosome DB also stops the run before any job starts, naming the config key.
+- **`custom_transcript_list` can be left out.** It then means the reference list, `transcripts_reference_<release>.csv`
+  (pre-built when `only_MANE_select` is set); the upstream value `data/transcripts_reference_<release>.csv` means the
+  same list. An empty value still means every transcript of `included_transcript_biotypes`. A `contaminants_fasta`
+  other than ProHap's `crap.fasta` is still tagged in the work directory.
+
 ### Output changes
 
 - **Merged haplotypes list all their samples.**
