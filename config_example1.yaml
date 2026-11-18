@@ -1,13 +1,12 @@
  # ---------------- Global parameters ----------------
-Ensembl_FTP_URL: ftp.ensembl.org/pub/release-114/
-annotationFilename: Homo_sapiens.GRCh38.114.chr_patch_hapl_scaff
-ensembl_release: 114
+implementation: fast      # fast (src/) or legacy (legacy/src); both write the same output
+ensembl_release: 113
+refs_dir: ""              # pre-built references; empty means $PROHAP_REFS, then /opt/prohap/refs
 
 chromosomes: [ "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "X" ]
 
 contaminants_fasta: "crap.fasta"      # Path to the FASTA file with contaminant sequences
 
-custom_transcript_list: "data/transcripts_reference_114.csv"
 included_transcript_biotypes: ""
 only_MANE_select: True
 
@@ -17,7 +16,6 @@ fasta_simplify_headers: True
 # ---------------- ProHap parameters ----------------
 use_ProHap: True
 
-phased_FTP_URL: ""
 phased_local_path: "sample_data/"
 phased_vcf_file_name: "sample_chr{chr}_1kGP_GRCh38_phased*.vcf"
 sample_metadata_file: "igsr_samples.tsv" 

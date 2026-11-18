@@ -1,9 +1,8 @@
 # ProHap configuration template for an air-gapped TRE run.
 #
 # Place this file as config.yaml in the directory you run from. That directory
-# becomes the working directory: it holds the cached Ensembl references and
-# gffutils databases, plus intermediates and logs. Keep it between runs -
-# rebuilding the GTF databases is the most expensive part of the setup.
+# becomes the working directory: it holds intermediates and logs. The Ensembl
+# references and gffutils databases are pre-built in the image and read in place.
 #
 # Paths marked <<< EDIT >>> must be changed. Absolute paths may point anywhere
 # that is bind-mounted into the container; relative paths resolve inside the
@@ -11,19 +10,31 @@
 
 # ---------------- Global parameters ----------------
 
-# Must match the ENSEMBL_RELEASE the image was built with, or the workflow will
-# try to download the missing release and fail with no network.
-Ensembl_FTP_URL: ftp.ensembl.org/pub/release-113/
-annotationFilename: Homo_sapiens.GRCh38.113.chr_patch_hapl_scaff
+# fast runs ProHap-fast (src/); legacy runs the frozen reference (legacy/src).
+# Both write byte-identical output; `verify` runs both and compares them.
+implementation: fast
+
+# Must equal the Ensembl release of the image (prohap-fast:<version>-ensembl.v113
+# carries release 113); any other value stops the run before it starts. Nothing
+# is downloaded. The annotation and the reference transcript list follow from it.
 ensembl_release: 113
+
+# Pre-built references, as <refs_dir>/ensembl.v<ensembl_release>/. Empty means
+# $PROHAP_REFS, which the image sets. Change it only for references you built
+# yourself with container/prebuild_refs.py.
+refs_dir: ""
 
 chromosomes: [ "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "X" ]
 
-# Shipped inside the image; the working directory has no copy of the repo.
+# Shipped inside the image, which also carries its tagged copy. Any other file
+# is tagged in the working directory.
 contaminants_fasta: "/opt/prohap/crap.fasta"
 
-# Cached in the working directory, generated on the first run.
-custom_transcript_list: "data/transcripts_reference_113.csv"
+# With only_MANE_select, ProHap uses the MANE Select transcript of each gene
+# (Ensembl canonical where a gene has none); that list is pre-built in the
+# image. To use your own list instead, add
+#   custom_transcript_list: "/path/to/transcripts.csv"   # chromosome,transcriptID
+# or set it to "" for every transcript of included_transcript_biotypes.
 included_transcript_biotypes: ""
 only_MANE_select: True
 
@@ -37,8 +48,6 @@ fasta_simplify_headers: True
 # ---------------- ProHap parameters ----------------
 use_ProHap: True
 
-# Leave the FTP URL empty so the download rule is never selected.
-phased_FTP_URL: ""
 phased_local_path: "/data/phased_vcfs/"                                  # <<< EDIT
 phased_vcf_file_name: "chr{chr}_cohort_phased.vcf.gz"                    # <<< EDIT
 # {chr} is substituted per chromosome and the result is globbed, so several
