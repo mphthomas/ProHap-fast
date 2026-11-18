@@ -6,8 +6,17 @@ on the same inputs, once with the reference and once with ProHap-fast, and compa
 
 ## Running it
 
-Run it from the directory that holds your `config.yaml`, the same directory a normal run uses, with the ProHap
-environment active:
+Run it from the directory that holds your `config.yaml`, the same directory a normal run uses. In the release image
+it is the `verify` command, with the same mounts as a normal run (see the [README](../README.md#running-with-docker)):
+
+```bash
+cd /path/to/workdir
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":"$PWD" -w "$PWD" -v /data:/data:ro \
+    prohap-fast:0.1.0-ensembl.v113 verify --cores 8 --samples 2000 --transcripts 50
+singularity run --bind /data prohap-fast.sif verify --cores 8 --samples 2000 --transcripts 50
+```
+
+Without a container, with the ProHap environment active:
 
 ```bash
 cd /path/to/workdir

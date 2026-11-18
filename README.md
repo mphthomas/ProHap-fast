@@ -1,162 +1,292 @@
-# ProHap & ProVar
-Proteogenomics database-generation tool for protein haplotypes and variants. Paper describing the tool: [![DOI](https://zenodo.org/badge/DOI/10.1038/s41592-024-02506-0.svg)](https://doi.org/10.1038/s41592-024-02506-0).
+# ProHap-fast
 
-When using ProHap or ProVar in your publication, please cite: Vašíček, J., Kuznetsova, K.G., Skiadopoulou, D. et al. ProHap enables human proteomic database generation accounting for population diversity. _Nature Methods_ (2024). [https://doi.org/10.1038/s41592-024-02506-0](https://doi.org/10.1038/s41592-024-02506-0)
+ProHap-fast builds protein haplotype databases for proteogenomics from phased genotypes, like
+[ProHap](https://github.com/ProGenNo/ProHap), of which it is a fork. It is meant for biobank cohorts: hundreds of
+thousands of phased whole-genome samples in one run, inside a Trusted Research Environment (TRE) with no network.
 
-## Databases generated using ProHap
-- Databases obtained from the common haplotypes of the 1000 Genomes Project along with metadata set can be found at [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10149277.svg)](https://doi.org/10.5281/zenodo.10149277).
-- Databases obtained from the common haplotypes of the Release 1.1 of the Haplotype Reference Consortium (HRC) along with metadata set can be found at [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.12671301.svg)](https://doi.org/10.5281/zenodo.12671301).
-- Databases obtained from the preliminary release of the Human Pangenome Reference Consortium (HPRC) along with metadata set can be found at [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.12686818.svg)](https://doi.org/10.5281/zenodo.12686818).
+- **Same output as ProHap.** ProHap-fast's output is byte-identical to that of its reference implementation, a
+  frozen copy of ProHap kept in [`legacy/`](legacy/README.md). You can check this on your own data with one command,
+  [`verify`](#check-it-on-your-data-verify). The reference differs from upstream ProHap only where the
+  [CHANGELOG](CHANGELOG.md) says so; chiefly, when two haplotypes merge into one protein haplotype, the merged row
+  lists the samples of both, where upstream kept only the first list.
+- **No downloads at run time.** Each image carries one Ensembl release with every reference ProHap derives from it
+  already built: the gffutils databases, the MANE transcript list, the merged cDNA, the tagged reference proteome
+  and the tagged contaminants.
+- **Docker or Singularity/Apptainer**, as any user.
 
-> Note: The databases contain only common haplotypes (maf > 1 %), no individual-level data is available from the databases. For individual-level sequences, please run ProHap on the individual-level data.
+**Status: development (0.1.0-dev).** The workflow, the release image and `verify` are in place, but `src/`, the
+fast implementation, is still the reference code: runs are exactly as fast as ProHap. The speed-ups land in later
+releases, each checked against the reference on every fixture; see the plan in
+[docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md). ProVar (individual variants) runs unchanged from
+upstream in every release.
 
-## Input & Usage
-Below is a brief overview, for details on input file format and configuration, please refer to the [Wiki page](https://github.com/ProGenNo/ProHap/wiki/Input-&-Usage).
+When you use ProHap-fast, please cite the ProHap paper ([below](#citation-and-licence)).
 
-Required input:
- - For ProHap: VCF with phased genotypes, one file per chromosome \(such as [1000 Genomes Project](http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/) - downloaded automatically by Snakemake if URL is provided\)
- - For ProVar: VCF, single file per dataset. Multiple VCF files can be processed by ProVar in the same run.
- - FASTA file of contaminant sequences. These will then be added to the final FASTA, and tagged as contaminants. The default contaminant database is created by the [cRAP](https://www.thegpm.org/crap/) project, provided in this repository.
- - GTF annotation file (Ensembl - downloaded automatically by Snakemake)
- - cDNA FASTA file (Ensembl - downloaded automatically by Snakemake)
- - (optional) ncRNA FASTA file (Ensembl - downloaded automatically by Snakemake)
+## Contents
 
-Required software: [Snakemake](https://snakemake.readthedocs.io/en/stable/) & [Conda](https://docs.conda.io/en/latest/). ProHap was tested with Ubuntu 22.04.3 LTS. Windows users are encouraged to use the [Windows Subsystem for Linux](https://ubuntu.com/desktop/wsl).
+- [Quick start](#quick-start)
+- [Images and Ensembl releases](#images-and-ensembl-releases)
+- [Running with Docker](#running-with-docker) and [with Singularity or Apptainer](#running-with-singularity-or-apptainer)
+- [Check it on your data: verify](#check-it-on-your-data-verify)
+- [Input requirements](#input-requirements)
+- [Configuration](#configuration)
+- [Sizing a large cohort](#sizing-a-large-cohort)
+- [Building the image](#building-the-image), [running without a container](#running-without-a-container)
+- [Output](#output), [development](#development), [citation and licence](#citation-and-licence)
 
-Using ProHap with the full 1000 Genomes Project data set (as per default) requires about 1TB disk space!
+## Quick start
 
-Usage:
- 1. Clone this repository: `git clone https://github.com/ProGenNo/ProHap.git; cd ProHap/;`
- 2. Create a configuration file called `config.yaml` using https://progenno.github.io/ProHap/. Please refer to the [Wiki page](https://github.com/ProGenNo/ProHap/wiki/Input-&-Usage) for details.
- 3. Test Snakemake with a dry-run: `snakemake --cores <# provided cores> -n -q`
- 4. Run the Snakemake pipeline to create your protein database: `snakemake --cores <# provided cores> -p --use-conda`
+The 1000 Genomes example of this repository (2,548 samples, common variants, 23 chromosomes), with the image of
+Ensembl release 113. Until images are published (from 0.1.0), build it first, for your machine's platform:
 
-### Example: ProHap on 1000 Genomes
-In the first usage example, we provide a small example dataset taken from the 1000 Genomes Project on GRCh38. We will use ProHap to create a database of protein haplotypes aligned with Ensembl v.115 (May 2025) using only MANE Select transcripts.
+```bash
+git clone https://github.com/mphthomas/ProHap-fast.git && cd ProHap-fast
+container/build_image.sh --platform linux/amd64      # linux/arm64 on Apple Silicon; about 10 minutes
+IMAGE=prohap-fast:$(cat VERSION)-ensembl.v113
 
-Expected runtime using 4 CPU cores: ~1 hour. Expected runtime using 23 CPU cores: ~30 minutes.
-
-Requirements: Install Conda / Mamba and Snakemake using [this guide](https://snakemake.readthedocs.io/en/stable/getting_started/installation.html#installation-via-conda-mamba). Minimum hardware requirements: 1 CPU core, ~5 GB disk space, 3 GB RAM.
-  
-Use the following commands to run this example:
-
-```
-# Clone this repository:
-git clone https://github.com/ProGenNo/ProHap.git ;
-cd ProHap;
-
-# Unpack the sample dataset
-cd sample_data ;
-gunzip sample_1kGP_common_global.tar.gz ;
-tar xf sample_1kGP_common_global.tar ;
-cd .. ;
-
-# Copy the configuration to config.yaml
-cp config_example1.yaml config.yaml ;
-
-# Activate the snakemake conda environment and run the pipeline
-conda activate snakemake ;
-snakemake --cores 4 -p --use-conda ;
+tar -xzf sample_data/sample_1kGP_common_global.tar.gz -C sample_data
+cp config_example1.yaml config.yaml
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":"$PWD" -w "$PWD" $IMAGE              # dry run: what would run
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":"$PWD" -w "$PWD" $IMAGE --cores 4 -p  # the run: about 20 minutes
 ```
 
-## Air-gapped / TRE usage (Singularity, no internet)
+The database is `results/example1_concatenated_database_simplified.fasta`, with its headers in
+`results/example1_concatenated_database_header.tsv` and the haplotypes in `results/example1_haplotypes.tsv`.
 
-A `Dockerfile` is provided for running ProHap inside a Trusted Research Environment that has Singularity but no internet access. The image bundles Snakemake, every Python dependency from `envs/prohap.yaml`, and a full set of Ensembl GRCh38 reference files (GTF, cDNA, ncRNA, protein FASTA) so that no `download_*` rule ever tries to reach the network.
+## Images and Ensembl releases
 
-The container never writes anything of its own into your directories: no symlinks back into the image, no copies of the repository. Every file a run produces is a real file, readable on the host after the container exits.
+An image holds one Ensembl release and is tagged with it: `prohap-fast:<version>-ensembl.v<release>`, for example
+`prohap-fast:0.1.0-ensembl.v113` is ProHap-fast 0.1.0 with the references of Ensembl release 113 (GRCh38). The
+release is also in the image's environment (`ENSEMBL_RELEASE`) and labels (`io.prohap.ensembl_release`, with the
+version, commit and build date in the `org.opencontainers.image.*` labels).
 
-### 1. Build the image
+- `ensembl_release` in `config.yaml` must equal the image's release; a config for another release stops before
+  anything runs. To use another release, use (or [build](#building-the-image)) the image of that release. Outputs of
+  different releases differ by design.
+- Images are built for `linux/amd64` (Linux servers, HPC, TREs) and `linux/arm64` (Apple Silicon). They are about
+  9 GB, of which the references take 8.2 GB.
+- From release 0.1.0 on, images are published on Docker Hub as `mphthomas/prohap-fast:<version>-ensembl.v<release>`.
+  Until then, [build the image](#building-the-image) yourself.
+- For a TRE without registry access, transfer the image as a file. The smallest is a SIF built outside (about
+  1.3 GB): `singularity build prohap-fast.sif docker-daemon:IMAGE`, or from a registry with `docker://`. A Docker
+  archive also works: `docker save -o prohap-fast.tar IMAGE` (9 GB; gzip it for the transfer, to about 1.6 GB),
+  then, uncompressed, `singularity build prohap-fast.sif docker-archive:prohap-fast.tar` inside. Apptainer 1.5
+  does not read a gzipped archive.
 
-On any internet-connected host. On Apple Silicon Macs, pin the platform to `linux/amd64` (emulated via QEMU — the build takes 20–40 minutes):
+Inside the image, `/opt/prohap` holds the workflow (`Snakefile`, `src/`, `legacy/src`), `verify/`, the references
+in `refs/ensembl.v<release>/`, `crap.fasta` (the default contaminants) and `config_tre_template.yaml`. Everything
+is read in place; nothing is copied into your directories.
 
-```
-docker buildx build --platform=linux/amd64 -t <yourname>/prohap:<tag> --load .
-```
+## Running with Docker
 
-The Ensembl release defaults to **113**. To build against a different release:
+Run from the work directory, the directory that holds `config.yaml`. It also receives the intermediates
+(`data/`, `results/`, `tmp/`), the logs and Snakemake's state, and is mounted at its own path:
 
-```
-docker buildx build --platform=linux/amd64 --build-arg ENSEMBL_RELEASE=114 \
-  -t <yourname>/prohap:114 --load .
-```
-
-> The release baked into the image **must** match `ensembl_release` and `annotationFilename` in your `config.yaml`. If they disagree, the workflow tries to download the release it is missing and fails with no network. The entrypoint warns about the most common form of this mismatch before Snakemake starts.
-
-### 2. Transfer the image into the TRE
-
-Pick whichever the TRE ingress supports:
-
-- **Docker Hub:** `docker push <yourname>/prohap:<tag>`, then inside the TRE `singularity build prohap.sif docker://<yourname>/prohap:<tag>`.
-- **Single file:** `docker save <yourname>/prohap:<tag> | gzip > prohap.tar.gz`, transfer, then inside the TRE `singularity build prohap.sif docker-archive:prohap.tar.gz`.
-
-### 3. Set up a working directory
-
-The directory you run from is the working directory. It holds `config.yaml`, the cached references and gffutils databases, and the intermediates and logs. **Keep it between runs** — parsing the GTF into gffutils databases is by far the most expensive setup step, and a warm cache skips it entirely.
-
-Copy `config_tre_template.yaml` to `config.yaml` in that directory and edit the paths marked `<<< EDIT >>>`. Input VCFs and outputs can live anywhere that is bind-mounted; refer to them by their ordinary paths.
-
-### 4. Run
-
-```
-cd /scratch/prohap_run                       # contains config.yaml
-singularity run \
-  --bind /data/phased_vcfs \
-  --bind /results/prohap \
-  prohap.sif snakemake --cores 16 -p
+```bash
+cd /path/to/workdir                       # contains config.yaml
+docker run --rm -u "$(id -u):$(id -g)" \
+    -v "$PWD":"$PWD" -w "$PWD" \
+    -v /data/phased_vcfs:/data/phased_vcfs:ro \
+    -v /results/prohap:/results/prohap \
+    prohap-fast:0.1.0-ensembl.v113 --cores 16 -p
 ```
 
-Singularity bind-mounts your current directory and starts the container in it, so the working directory needs no explicit flag. Bind any other path your `config.yaml` refers to. Run with no arguments for a dry run.
+- Mount every path `config.yaml` refers to (VCFs, sample metadata, outputs) at the same path inside the container,
+  so that the config resolves unchanged. Relative paths in the config are relative to the work directory.
+- `-u "$(id -u):$(id -g)"` runs the container as you, so every file it writes is yours.
+- After the image name comes a command:
 
-Overridable via the environment, though rarely needed:
+| Command | What it does |
+| --- | --- |
+| (none) | a dry run: lists the jobs the workflow would run |
+| `[snakemake] ARGS` | runs the workflow, `snakemake ARGS`, e.g. `--cores 16 -p` (`--rerun-triggers mtime` is added) |
+| `verify [ARGS]` | runs the reference and ProHap-fast on the same input and compares every output ([below](#check-it-on-your-data-verify)) |
+| `shell [ARGS]` | `bash` inside the image |
+| `help` | the list of commands |
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PROHAP_WORK` | current directory | working directory / cache |
-| `PROHAP_REFS` | `/opt/prohap/refs` | gzipped reference store |
-| `PYTHONHASHSEED` | `0` (set in the image) | keeps FASTA record order reproducible |
+A run that stops can be resumed with the same command: Snakemake reruns only what is missing. Add `--keep-going`
+to finish the other chromosomes when one fails.
 
-The config is always `config.yaml` inside the working directory.
+## Running with Singularity or Apptainer
 
-Use `singularity run ... prohap.sif shell` to get a shell inside the image for debugging.
+The same image runs under Singularity and Apptainer, which mount the current directory and run as you without
+being asked:
 
-### Sizing a large cohort
+```bash
+singularity build prohap-fast.sif docker://mphthomas/prohap-fast:0.1.0-ensembl.v113   # or docker-archive:FILE.tar
+cd /path/to/workdir                       # contains config.yaml
+singularity run --bind /data/phased_vcfs,/results/prohap prohap-fast.sif --cores 16 -p
+singularity run --bind /data/phased_vcfs prohap-fast.sif verify --cores 8 --chromosomes 21,22 --transcripts 20
+```
 
-Cores and memory are set by how many chromosomes run at once, which is `snakemake --cores` divided by `max_cores` in the config. The heaviest per-chromosome steps (`vcf_filter_fix.py`, and VCF parsing inside `prohap.py`) are single-threaded, so parallelism *across* chromosomes matters more than threads within one.
+Bind every path `config.yaml` refers to that is not under the current directory or your home directory. The
+commands are those of the Docker table above. The image's references and environment are fixed: the host's
+`PROHAP_REFS`, `PYTHONHASHSEED` and user site-packages (`~/.local`) do not reach the workflow. Snakemake's cache
+goes to `.cache/` in the work directory, and its home to `.home/` there when the home directory is not writable
+(Docker with `-u`, Singularity with `--no-home`).
 
-For a cohort of ~27,000 samples, one VCF per chromosome, as a starting point:
+## Check it on your data: verify
+
+`verify` runs the workflow twice on your inputs, once with the reference (`implementation: legacy`) and once with
+ProHap-fast (`implementation: fast`), each in its own directory under `verify_runs/<timestamp>/`, and compares
+every output byte for byte after decompression. Your `config.yaml` and your outputs are not touched. It prints a
+table (file, both sha256 sums, IDENTICAL or DIFFERENT, the first differing line) and both run times, and exits with
+status 0 only when every output is identical.
+
+```bash
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":"$PWD" -w "$PWD" -v /data:/data:ro \
+    prohap-fast:0.1.0-ensembl.v113 verify --cores 8 --chromosomes 21,22 --samples 2000 --transcripts 50
+```
+
+The reference is slow at cohort scale (about 2,000 CPU seconds per 60 transcripts at 26,000 samples), so restrict
+both runs: `--chromosomes 21,22`, `--samples N` (a seeded random draw) or `--sample-list FILE`, and
+`--transcripts N` (the first N transcripts of each chromosome). `--transcripts 20` alone checks ProHap-fast at your
+full sample count, which matters because the reference reads its tables in chunks whose size depends on the number
+of samples. Details, and what each check covers: [verify/README.md](verify/README.md).
+
+## Input requirements
+
+- **Phased, multi-sample VCF**, one chromosome per file or several chunks per chromosome (a glob in
+  `phased_vcf_file_name`). Text VCF, plain or gzip/bgzip; convert BCF with `bcftools view -Ov`. Records sorted by
+  position.
+- **Chunks** are read in alphabetical order and only the first header is kept, so their names must sort in genomic
+  order, they must not overlap, and every chunk must list the same samples in the same order.
+- **Genotypes**: `FORMAT` is `GT` alone, phased, one character per allele (`0|1`, `.|0`, haploid `1` for chrX in
+  males). This is what the fast implementation is built for; input outside it (unphased or multi-character
+  genotypes, other FORMAT fields, quotes, CR or non-ASCII bytes, duplicate sample or transcript IDs) is processed by
+  the reference code, at the reference's speed, never guessed at.
+- **Sample IDs must not be purely numeric**: pandas reads them as numbers from the metadata, and every sample is
+  dropped without an error.
+- **`sample_metadata_file`** lists every sample of the VCF, tab-separated, with the columns `Sample name`, `Sex`
+  (`male` for males), `Population code` and `Superpopulation code`. Samples missing from it are dropped from the
+  analysis and from every frequency.
+- **Records with ID `.`** are named after their line number in the filtered VCF. Anything that adds or removes lines
+  before them (another region, other filters, a different header) renames them; set IDs first with
+  `bcftools annotate --set-id` if you need stable names.
+
+`verify` checks the header and the first records of every chunk for most of these and warns before it runs.
+
+## Configuration
+
+Start from [`config_tre_template.yaml`](config_tre_template.yaml) (also in the image as
+`/opt/prohap/config_tre_template.yaml`), save it as `config.yaml` in the work directory and edit the lines marked
+`<<< EDIT >>>`. [`config_file_example`](config_file_example) documents every setting. The ones that matter most:
+
+- `ensembl_release` must be the image's release. Nothing else names the release: the annotation and the reference
+  transcript list follow from it.
+- `implementation: fast` (default) or `legacy` picks the implementation; both write the same output.
+- `phased_min_af` sets which variants are kept, and so the size of almost everything downstream.
+- `haplo_min_count` applies only when `haplo_min_freq` is `-1`; any other `haplo_min_freq` thresholds by frequency
+  instead. `haplo_min_freq: 0` keeps every private haplotype, which at cohort scale gives a database too large to
+  search.
+- `final_fasta_file` must not end in `.gz`; the other output names may.
+
+Settings of upstream ProHap that downloaded files (`Ensembl_FTP_URL`, `annotationFilename`, `phased_FTP_URL`) are
+ignored with a warning while they agree with `ensembl_release`, and stop the run when they do not.
+
+## Sizing a large cohort
+
+Snakemake runs one job per chromosome for the heavy steps; `max_cores` in the config is the threads per chromosome
+job, so `--cores` divided by `max_cores` is the number of chromosomes in flight. Memory scales with that number.
+The per-chromosome steps are mostly single-threaded, so parallelism across chromosomes matters more than threads
+within one.
+
+For the current release, which runs at the reference's speed, a cohort of about 27,000 samples with one VCF per
+chromosome needs, as a starting point:
 
 | Resource | Suggested | Notes |
 | --- | --- | --- |
 | Cores | 16–24 | with `max_cores: 4`, four chromosomes in flight |
-| Memory | 128 GB | chr1/chr2 peak roughly 10–20 GB each; small chromosomes 2–5 GB |
-| Scratch | 300–500 GB | per-transcript TSVs carry every sample column, and are only cleaned up when their chromosome finishes |
+| Memory | 128 GB | chr1/chr2 peak at roughly 10–20 GB each; small chromosomes 2–5 GB |
+| Scratch | 300–500 GB | the per-transcript tables hold every sample column until their chromosome finishes |
 
-Memory is dominated by the per-haplotype sample lists, so it scales with the number of concurrent chromosomes rather than with `max_cores`. Run one chromosome first (`chromosomes: [ "22" ]`) and measure before committing to a genome-wide run.
+Run one chromosome first (`verify --chromosomes 22`, or `chromosomes: ["22"]`) and measure before a genome-wide
+run. Releases with the speed-ups will update this table.
 
-Two config settings matter disproportionately at this scale:
+## Building the image
 
-- `phased_min_af` controls how many variants survive, and therefore almost everything downstream.
-- `haplo_min_count` only takes effect when `haplo_min_freq` is `-1`. Leaving `haplo_min_freq: 0` keeps every private haplotype, which at cohort scale produces a database too large to search.
+On any machine with Docker and network access:
 
-## Using the database for proteomic searches
-Once you obtain a list of peptide-spectrum matches (PSMs), you can use a pipeline provided in the [PeptideAnnotator](https://github.com/ProGenNo/ProHap_PeptideAnnotator) repository to map the peptides back to the respective protein haplotype / variant sequences, and map the identified variants back to their genetic origin. For the usage and details, please refer to the following [wiki page](https://github.com/ProGenNo/ProHap/wiki/Using-the-database-for-proteomic-searches).
+```bash
+container/build_image.sh                                   # release 113, linux/amd64 and linux/arm64
+container/build_image.sh --release 114 --platform linux/amd64 --no-cache
+```
+
+The Ensembl files (GTF, cDNA, ncRNA, protein FASTA) are downloaded while the image is built, and
+`container/prebuild_refs.py` builds the references from them with the reference scripts, natively on the build
+machine (about 4 minutes); the image of the other platform reuses them. A platform other than the build machine's
+needs emulation: Docker Desktop on Apple Silicon builds `linux/amd64` with Rosetta. The script tags
+`prohap-fast:<version>-ensembl.v<release>-<arch>` for each platform it builds, and
+`prohap-fast:<version>-ensembl.v<release>` for the build machine's own. `<version>` comes from the `VERSION` file.
+A first build takes about 10 minutes; after a change to the workflow's code, a few seconds.
+
+## Running without a container
+
+The workflow runs in a conda environment on Linux or macOS, given references built once with
+`container/prebuild_refs.py`:
+
+```bash
+micromamba create -n ProHap -f envs/prohap.linux-64.lock          # or .linux-aarch64 / .osx-arm64
+micromamba run -n ProHap python -m pip install --no-deps --only-binary=:all: --require-hashes -r envs/prohap.pip.lock
+# the four Ensembl downloads of the release, as the Dockerfile fetches them, in ~/ensembl-113/
+micromamba run -n ProHap python container/prebuild_refs.py --release 113 --downloads ~/ensembl-113 --out ~/prohap-refs
+cd /path/to/workdir && PROHAP_REFS=~/prohap-refs micromamba run -n ProHap \
+    snakemake --snakefile /path/to/ProHap-fast/Snakefile --cores 8 -p
+```
+
+`verify` runs the same way: `python /path/to/ProHap-fast/verify/verify.py --cores 8 ...`. On `linux-aarch64`, also
+set `LD_LIBRARY_PATH` to the environment's `lib/` (the image does; see IMPLEMENTATION_NOTES, Pinned versions). On
+macOS the workflow starts ProHap's worker processes with `fork`, as on Linux. The macOS build of pandas parses some
+17-digit numbers differently from the Linux builds, so at cohort scale a Mac writes some `frequency` values
+differently: compare Mac output only with Mac output. `verify` runs both implementations on the same machine, so its
+comparison holds everywhere.
 
 ## Output
-The ProHap / ProVar pipeline produces four kinds of output files. Below is a brief description, please refer to the [wiki page](https://github.com/ProGenNo/ProHap/wiki/Output-files) for further details.
 
-1. *Concatenated FASTA file*: The main result of the pipeline is the concatenated FASTA file, consisting of the ProHap and/or ProVar output, reference sequences from Ensembl, and provided contaminant sequences. The file can be used with any search engine.
-    * Optionally, headers are extracted and provided in an attached tab-separated file, and a gene name is added to each protein entry. 
-2. *Metadata table*: Additional information on the variant / haplotype sequences produced by the pipeline, such as genomic coordinates of the variants covered, variant consequence type, etc.
-3. *cDNA translations FASTA*: FASTA file contains the original translations of variant / haplotype cDNA sequences prior to any optimization, and merging with canonical proteins and contaminants. Note that if ignoring variation in UTRs (default configuration of ProHap), UTR sequences are not included here. Otherwise, they are kept in this file. 
-4. *cDNA sequences FASTA*: Optional: FASTA file contains the variant / haplotype cDNA sequences prior to any optimization, and merging with canonical proteins and contaminants. Note that if ignoring variation in UTRs (default configuration of ProHap), UTR sequences are not included here. Otherwise, they are kept in this file. 
+The workflow writes four kinds of output; the [ProHap wiki](https://github.com/ProGenNo/ProHap/wiki/Output-files)
+describes them in detail.
 
-## Bug report and contribution
-We welcome bug reports, suggestions of improvements, and contributions. Please do not hesitate to [open an issue](https://github.com/ProGenNo/ProHap/issues) or a [pull request](https://github.com/ProGenNo/ProHap/pulls).
+1. *Concatenated FASTA* (`final_fasta_file`): the protein haplotypes (and ProVar variants, if enabled), the Ensembl
+   reference proteome and the contaminants, ready for any search engine. With `fasta_simplify_headers`, the headers
+   are moved into a separate table and a gene name is added to each protein.
+2. *Haplotype table* (`haplo_table_file`): genomic coordinates, consequences, frequencies and counts of each
+   haplotype, with the sample IDs in a table next to it (`<name>_sampleIDs.tsv`).
+3. *Haplotype translations* (`haplo_fasta_file`): the translated haplotype sequences before they are merged with the
+   reference proteins and contaminants. When variation in UTRs is ignored (the default), UTR sequences are left out.
+4. *Haplotype cDNA* (`haplo_cdna_file`, optional): the cDNA sequences before translation.
 
-## Code of Conduct
-As part of our efforts toward delivering open and inclusive science, we follow the [Contributor Convenant](https://www.contributor-covenant.org/) [Code of Conduct for Open Source Projects](docs/CODE_OF_CONDUCT.md).
+To map peptide-spectrum matches back to haplotypes, variants and their genetic origin, use
+[ProHap PeptideAnnotator](https://github.com/ProGenNo/ProHap_PeptideAnnotator).
 
-## Citation
-When using ProHap and databases generated using ProHap, please cite the accompanying scientific publication [![DOI](https://zenodo.org/badge/DOI/10.1101/2023.12.24.572591.svg)](https://doi.org/10.1101/2023.12.24.572591).
+Ready-made ProHap databases from the 1000 Genomes Project, the Haplotype Reference Consortium and the Human
+Pangenome Reference Consortium are on Zenodo:
+[10.5281/zenodo.10149277](https://doi.org/10.5281/zenodo.10149277),
+[10.5281/zenodo.12671301](https://doi.org/10.5281/zenodo.12671301),
+[10.5281/zenodo.12686818](https://doi.org/10.5281/zenodo.12686818).
 
+## Development
 
+- `src/` is the fast implementation, `legacy/src` the frozen reference ([never edited](legacy/README.md)); the
+  config's `implementation` picks one, and every rule, path and reference is shared.
+- `tests/legacy_vs_fast.sh` is the check every change to `src/` must pass. It runs the workflow with the reference
+  code and then with `src/` on the 1kG fixture ([tests/fixtures/1kg](tests/fixtures/1kg/README.md)), and compares
+  every output, in about a minute and a half. It runs in the ProHap environment with pre-built references
+  (`PROHAP_REFS`), without a container.
+- `pytest tests/` runs the unit tests in under a minute (pytest: `pip install --no-deps --require-hashes -r
+  envs/test.pip.lock`). With pre-built references, `tests/test_identity.py` also runs `verify` on the fixture.
+- CI (GitHub Actions): `unit` runs pytest on every push and pull request.
+- Design, measurements and the rebuild recipes for each speed-up:
+  [docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md).
+
+Bug reports and contributions are welcome as [issues](https://github.com/mphthomas/ProHap-fast/issues) and pull
+requests. A problem you can reproduce with `implementation: legacy` is a ProHap behaviour; report it upstream at
+[ProGenNo/ProHap](https://github.com/ProGenNo/ProHap/issues) too.
+
+## Citation and licence
+
+When using ProHap-fast, or databases generated with it, please cite the ProHap paper: Vašíček, J., Kuznetsova,
+K.G., Skiadopoulou, D. et al. ProHap enables human proteomic database generation accounting for population
+diversity. _Nature Methods_ (2024). [https://doi.org/10.1038/s41592-024-02506-0](https://doi.org/10.1038/s41592-024-02506-0)
+
+MIT licence, as ProHap ([LICENSE](LICENSE)). We follow the
+[Contributor Covenant](https://www.contributor-covenant.org/) [Code of Conduct](docs/CODE_OF_CONDUCT.md).
