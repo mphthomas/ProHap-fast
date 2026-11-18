@@ -4,12 +4,18 @@
 Run it from the directory that holds your config.yaml, the directory a normal run uses:
 
     python3 <ProHap-fast>/verify/verify.py --cores 8 [--chromosomes 21,22]
-        [--samples 2000 [--seed 0] | --sample-list ids.txt] [--transcripts 50]
+        [--samples 2000 [--seed 0] | --sample-list ids.txt] [--transcripts 50] [--keep] [--dry-run]
 
-verify prepares two work directories, verify_runs/<timestamp>/legacy/ and verify_runs/<timestamp>/fast/, each with
-a copy of config.yaml that differs only in `implementation` (legacy: legacy/src, the frozen reference; fast: src/).
-Both read the same inputs and references; relative input paths are resolved against the current directory, and
-every output path is moved into the arm's work directory, so nothing outside verify_runs/ is written.
+verify runs the workflow twice, in two work directories, verify_runs/<timestamp>/legacy/ and
+verify_runs/<timestamp>/fast/, each with a copy of config.yaml that differs only in `implementation` (legacy:
+legacy/src, the frozen reference; fast: src/). Both read the same inputs and references; relative input paths are
+resolved against the current directory, and every output path is moved into the arm's work directory, so nothing
+outside verify_runs/ is written. Then it compares every output, decompressed, byte for byte, and prints a table
+(file, both sha256s, IDENTICAL or DIFFERENT, first differing line) and both run times. The exit status is 0 only if
+every output is identical, 1 if any differs, 2 if verify or the legacy run failed.
+
+On success the work directories are deleted and only report.tsv is kept; --keep keeps everything. --dry-run
+prepares the run directory and dry-runs both arms.
 
 Subsetting, applied to both arms alike:
   --chromosomes 21,22    only these chromosomes of the config's list
@@ -21,7 +27,8 @@ Subsetting, applied to both arms alike:
                          which matters: the reference reads its tables in pandas chunks whose size depends on the
                          number of samples.
 
-This commit prepares the run directory, checks the VCFs and dry-runs both arms; running and comparing them follow.
+Each arm needs its own work directory: switching `implementation` in a directory that already holds outputs reruns
+nothing, because Snakemake sees the same rules with the same code and the outputs up to date.
 """
 import argparse
 import concurrent.futures
@@ -30,14 +37,17 @@ import glob
 import os
 import random
 import re
+import resource
 import shutil
 import subprocess
 import sys
+import time
 
 import yaml
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
+import compare  # noqa: E402
 import preflight  # noqa: E402
 
 ROOT = os.path.dirname(HERE)
@@ -71,6 +81,10 @@ def parse_args(argv):
     g.add_argument('--sample-list', metavar='FILE', help='use the samples named in FILE, one per line')
     p.add_argument('--seed', type=int, default=0, help='random seed for --samples (default 0)')
     p.add_argument('--transcripts', type=int, metavar='N', help='use the first N transcripts of each chromosome')
+    p.add_argument('--keep', action='store_true', help='keep the run directory when every output is identical')
+    p.add_argument('--dry-run', action='store_true', help='prepare the run directory and dry-run both arms')
+    # development: run the fast arm with the scripts in DIR instead of src/
+    p.add_argument('--fast-src', metavar='DIR', help=argparse.SUPPRESS)
     args = p.parse_args(argv)
     if args.cores < 1:
         p.error('--cores must be at least 1')
@@ -78,6 +92,10 @@ def parse_args(argv):
         p.error('--samples must be at least 1')
     if args.transcripts is not None and args.transcripts < 1:
         p.error('--transcripts must be at least 1')
+    if args.fast_src is not None:
+        if not os.path.isfile(os.path.join(args.fast_src, 'prohap.py')):
+            p.error('--fast-src %s has no prohap.py' % args.fast_src)
+        args.fast_src = os.path.abspath(args.fast_src)
     return args
 
 
@@ -347,6 +365,86 @@ def subset_transcripts(run, n, prepare_list):
     return {str(c): int((chrom[keep] == str(c)).sum()) for c in run.chromosomes}
 
 
+# ------------------------------------ outputs ------------------------------------
+
+def strip_ext(path, n):
+    return '.'.join(path.split('.')[:-n])
+
+
+def expected_outputs(cfg, refs):
+    """(path in the work directory, required) for every file the scripts write, in workflow order; computed from an
+    arm's config as the Snakefile names them. Files that are not required may be missing from both arms."""
+    out = []
+    release = str(cfg['ensembl_release'])
+    kind, path = transcript_source(cfg, refs)
+    if kind == 'rule':
+        out.append((path, False))
+    out.append(('data/fasta/ensembl_reference_proteinDB_' + release + '_clean.fa.gz', True))
+    out.append(('data/fasta/crap_tagged.fa.gz', False))     # only when contaminants_fasta is not ProHap's
+    haplo = 'results/' + str(cfg['working_dir_name_haplo'])
+    fasta_gz = '.gz' if str(cfg['haplo_fasta_file']).endswith('.gz') else ''
+    for c in cfg['chromosomes']:
+        out.append(('data/vcf/phased/chr%s_phased_filtered.vcf.gz' % c, True))
+        out.append(('%s/haplo_chr%s.tsv.gz' % (haplo, c), True))
+        out.append(('%s/haplo_chr%s.fa%s' % (haplo, c, fasta_gz), True))
+        out.append(('log/prohap_chr%s.log' % c, False))      # the removed-samples log; none for an empty VCF
+    out.append((haplo + '/haplo_all.tsv.gz', True))
+    table = str(cfg['haplo_table_file'])
+    out.append((table, True))
+    out.append(((strip_ext(table, 2) + '_sampleIDs.tsv.gz') if table.endswith('.gz')
+                else (strip_ext(table, 1) + '_sampleIDs.tsv'), True))
+    out.append((str(cfg['haplo_fasta_file']), True))
+    if cfg.get('haplo_cdna_file'):
+        out.append((str(cfg['haplo_cdna_file']), True))
+    out.append(('results/haplo_all_clean.fa.gz', True))
+    if cfg.get('use_ProVar'):
+        out += [(str(cfg['var_table_file']), True), (str(cfg['var_fasta_file']), True),
+                ('results/variants_all_clean.fa.gz', True)]
+        if cfg.get('var_cdna_file'):
+            out.append((str(cfg['var_cdna_file']), True))
+    if cfg.get('add_existing_haplo'):
+        out.append(('results/haplo_added_clean.fa.gz', True))
+    out.append(('results/ref_contam_vcf_haplo_all_clean.fa.gz', True))
+    out.append(('results/ref_contam_vcf_haplo_all_nodupl.fa.gz', True))
+    final = str(cfg['final_fasta_file'])
+    out.append((final, True))
+    if cfg.get('fasta_simplify_headers'):
+        if final.endswith('.gz'):
+            out += [(strip_ext(final, 2) + '_simplified.fasta.gz', True), (strip_ext(final, 2) + '_header.tsv.gz', True)]
+        else:
+            out += [(strip_ext(final, 1) + '_simplified.fasta', True), (strip_ext(final, 1) + '_header.tsv', True)]
+    return out
+
+
+def write_report(path, results, times):
+    with open(path, 'w') as fh:
+        for arm in ARMS:
+            if arm in times:
+                fh.write('# %s: %.0f s wall, %.0f CPU-s, exit %d\n' % ((arm,) + times[arm]))
+        fh.write('file\tlegacy_sha256\tfast_sha256\tresult\tfirst_difference\n')
+        for r in results:
+            fh.write('\t'.join([r.name, r.sha_a or '-', r.sha_b or '-', r.status, r.difference() or '-']) + '\n')
+
+
+def print_report(results, times):
+    width = max(len(r.name) for r in results)
+    print()
+    row = '%-*s  %-12s  %-12s  %-9s  %s'
+    print(row % (width, 'file', 'legacy', 'fast', 'result', 'first difference'))
+    for r in results:
+        print((row % (width, r.name, (r.sha_a or '-')[:12], (r.sha_b or '-')[:12], r.status, r.difference())).rstrip())
+    for r in results:
+        if r.line is not None:
+            print('\n%s, line %d:\n  legacy: %s\n  fast:   %s'
+                  % (r.name, r.line, '<end of file>' if r.text_a is None else r.text_a,
+                     '<end of file>' if r.text_b is None else r.text_b))
+    print()
+    for arm in ARMS:
+        if arm in times:
+            wall, cpu, code = times[arm]
+            say('%-6s %8.0f s wall %10.0f CPU-s%s' % (arm, wall, cpu, '' if code == 0 else '   FAILED (exit %d)' % code))
+
+
 # ------------------------------------ running ------------------------------------
 
 def child_env():
@@ -360,13 +458,34 @@ def child_env():
     return env
 
 
-def snakemake(workdir, cores, log_path, extra=()):
+def snakemake(workdir, cores, log_path, extra=(), snakefile=SNAKEFILE):
     # the Snakefile reads config.yaml from the work directory
-    cmd = [sys.executable, '-m', 'snakemake', '--snakefile', SNAKEFILE, '--directory', workdir,
+    cmd = [sys.executable, '-m', 'snakemake', '--snakefile', snakefile, '--directory', workdir,
            '--cores', str(cores)] + list(extra)
     with open(log_path, 'w') as log:
         proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, env=child_env())
     return proc.returncode
+
+
+def timed_snakemake(*args, **kwargs):
+    """snakemake() plus its wall time and the CPU time of everything it ran, in seconds."""
+    before, start = resource.getrusage(resource.RUSAGE_CHILDREN), time.monotonic()
+    code = snakemake(*args, **kwargs)
+    after, wall = resource.getrusage(resource.RUSAGE_CHILDREN), time.monotonic() - start
+    cpu = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
+    return code, wall, cpu
+
+
+def fast_src_workflow(run, fast_src):
+    """A copy of the workflow whose src/ is fast_src (for --fast-src): the Snakefile is copied, and legacy/, tools/
+    and envs/ link to this checkout's."""
+    wf = os.path.join(run.dir, 'workflow_fast')
+    os.makedirs(wf)
+    shutil.copy(SNAKEFILE, os.path.join(wf, 'Snakefile'))
+    for name in ('legacy', 'tools', 'envs'):
+        os.symlink(os.path.join(ROOT, name), os.path.join(wf, name))
+    os.symlink(fast_src, os.path.join(wf, 'src'))
+    return os.path.join(wf, 'Snakefile')
 
 
 def tail(path, n=30):
@@ -419,15 +538,67 @@ def main(argv=None):
             say('transcripts per chromosome: ' + ', '.join('%s: %d' % kv for kv in counts.items()))
 
         run.write_configs()
-        failed = False
+        snakefiles = {'legacy': SNAKEFILE, 'fast': fast_src_workflow(run, args.fast_src) if args.fast_src else SNAKEFILE}
+        if args.fast_src:
+            say('the fast arm runs the scripts in', args.fast_src)
+
+        if args.dry_run:
+            failed = False
+            for arm in ARMS:
+                log = os.path.join(run.dir, arm + '.dryrun.log')
+                if snakemake(run.arm_dir(arm), args.cores, log, ['--dry-run', '--quiet'], snakefiles[arm]) != 0:
+                    say('%s arm: dry run FAILED; see %s:\n%s' % (arm, os.path.relpath(log, cwd), tail(log)))
+                    failed = True
+                else:
+                    say('%s arm: dry run OK' % arm)
+            return 2 if failed else 0
+
+        if samples is None and not args.transcripts:
+            first = next((paths[0] for paths in run.chunks.values() if paths), None)
+            n = len((preflight.read_samples(first) if first else None) or [])
+            say('warning: the legacy arm runs at full scale: %d samples, every transcript of %d chromosome(s). The '
+                'reference takes about 2,000 CPU-s per 60 transcripts at 26k samples, and more than linearly longer '
+                'with more samples. For a first check use --samples 2000 --transcripts 50, or --transcripts 20 to '
+                'keep every sample.' % (n, len(run.chromosomes)))
+
+        times = {}
         for arm in ARMS:
-            log = os.path.join(run.dir, arm + '.dryrun.log')
-            if snakemake(run.arm_dir(arm), args.cores, log, ['--dry-run', '--quiet']) != 0:
-                say('%s arm: dry run FAILED; see %s:\n%s' % (arm, os.path.relpath(log, cwd), tail(log)))
-                failed = True
+            log = os.path.join(run.dir, arm + '.log')
+            say('running the %s arm; log: %s' % (arm, os.path.relpath(log, cwd)))
+            code, wall, cpu = timed_snakemake(run.arm_dir(arm), args.cores, log, ['--notemp'], snakefiles[arm])
+            times[arm] = (wall, cpu, code)
+            if code != 0:
+                say('%s arm FAILED (exit %d); the end of its log:\n%s' % (arm, code, tail(log)))
+                if arm == 'legacy':
+                    say('the reference failed, so there is nothing to compare against; kept', os.path.relpath(run.dir, cwd))
+                    return 2
+
+        results = [compare.compare(name, os.path.join(run.arm_dir('legacy'), name),
+                                   os.path.join(run.arm_dir('fast'), name), required)
+                   for name, required in expected_outputs(run.arm_config('fast'), run.refs)]
+        results = [r for r in results if r.status != compare.ABSENT]
+        report = os.path.join(run.dir, 'report.tsv')
+        write_report(report, results, times)
+        print_report(results, times)
+        identical = all(r.ok for r in results) and times['fast'][2] == 0
+        different = [r for r in results if not r.ok]
+        if identical:
+            say('IDENTICAL: all %d outputs' % len(results))
+            if not args.keep:
+                for name in os.listdir(run.dir):
+                    if name != 'report.tsv':
+                        path = os.path.join(run.dir, name)
+                        shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+                say('removed the work directories (--keep keeps them); report:', os.path.relpath(report, cwd))
             else:
-                say('%s arm: dry run OK' % arm)
-        return 2 if failed else 0
+                say('kept', os.path.relpath(run.dir, cwd))
+            return 0
+        if times['fast'][2] != 0:
+            say('FAILED: the fast arm failed, and %d of %d outputs differ or are missing; kept %s'
+                % (len(different), len(results), os.path.relpath(run.dir, cwd)))
+        else:
+            say('DIFFERENT: %d of %d outputs; kept %s' % (len(different), len(results), os.path.relpath(run.dir, cwd)))
+        return 1
     except VerifyError as e:
         say('error:', e)
         return 2

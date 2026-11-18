@@ -345,7 +345,7 @@ def test_dry_run_against_the_tiny_release(tmp_path, monkeypatch):
         yaml.safe_dump(cfg, fh)
     monkeypatch.chdir(work)
     monkeypatch.delenv('PROHAP_REFS', raising=False)
-    assert verify.main(['--cores', '2', '--chromosomes', '22', '--samples', '9', '--transcripts', '1']) == 0
+    assert verify.main(['--cores', '2', '--chromosomes', '22', '--samples', '9', '--transcripts', '1', '--dry-run']) == 0
     run_dir = next((work / 'verify_runs').iterdir())
     fast = yaml.safe_load((run_dir / 'fast' / 'config.yaml').read_text())
     assert fast['chromosomes'] == ['22']

@@ -10,6 +10,14 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 
 ## [Unreleased]
 
+### Added
+
+- **`verify` checks ProHap-fast against the reference on your own data.** Run from the directory that holds
+  `config.yaml`, `verify/verify.py` runs the workflow twice, with `implementation: legacy` and with
+  `implementation: fast`, each in its own work directory under `verify_runs/`, and compares every output byte for
+  byte after decompression. It can restrict both runs to some chromosomes, samples or transcripts, checks the VCFs
+  before it starts, and exits with status 0 only when every output is identical. See `verify/README.md`.
+
 ### Changed
 
 - **Ensembl references are pre-built and read in place; nothing is downloaded.** Everything the workflow derives
