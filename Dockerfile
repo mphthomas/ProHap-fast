@@ -101,13 +101,17 @@ COPY --chmod=a+rX verify/ /opt/prohap/verify/
 COPY --chmod=a+rX entrypoint.sh Snakefile /opt/prohap/
 COPY --chmod=a+rX src/ /opt/prohap/src/
 
-# ENSEMBL_RELEASE names the release of the references in this image; the workflow refuses a config for another one.
-# PYTHONHASHSEED: ProHap orders FASTA records by the Python hash of the sequence, so the seed must be fixed for
-# byte-identical output (the Snakefile also sets it for every rule).
+# ENSEMBL_RELEASE names the release of the references in this image; the entrypoint refuses a config for another
+# one. PYTHONHASHSEED: ProHap orders FASTA records by the Python hash of the sequence, so the seed must be fixed for
+# byte-identical output (the Snakefile also sets it for every rule). PYTHONNOUSERSITE: Singularity mounts $HOME, and a
+# ~/.local site-packages there must not shadow the environment's packages, in the rules (the Snakefile sets it too)
+# or in Snakemake and verify themselves. The entrypoint sets all of these again, because Singularity passes the
+# host's environment in and does not reliably apply the image's.
 ENV ENSEMBL_RELEASE=${ENSEMBL_RELEASE} \
     PROHAP_HOME=/opt/prohap \
     PROHAP_REFS=/opt/prohap/refs \
-    PYTHONHASHSEED=0
+    PYTHONHASHSEED=0 \
+    PYTHONNOUSERSITE=1
 
 USER $MAMBA_USER
 # Fail the build, not a run: the environment must load what the workflow imports, and another user must be able to

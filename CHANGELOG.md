@@ -23,6 +23,11 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   under `/opt/prohap/refs`. The Ensembl files are downloaded while the image is built, never when it runs. The
   version is in the new `VERSION` file and, with the release, the commit and the build date, in the image's labels.
   The image is about 9 GB.
+- **The image runs the workflow, `verify` or a shell, in the current directory.** `IMAGE` alone shows a dry run,
+  `IMAGE [snakemake] ARGS` runs the workflow, `IMAGE verify ARGS` runs `verify`, `IMAGE shell` opens bash and
+  `IMAGE help` lists these. A config whose `ensembl_release` is not the image's release stops before Snakemake
+  starts, naming both releases. The image's references, hash seed and packages are used whatever the host
+  environment holds (`PROHAP_REFS`, `PYTHONHASHSEED`, a `~/.local` site-packages under Singularity).
 
 ### Changed
 
