@@ -203,6 +203,24 @@ Same arguments, same stdout lines, same decompressed output. Output gzip level c
 Measured: 26k block 65 → 2.6 s; 500k block 185 s (decompression 21 s; most of the rest is recompressing output,
 which F3, fusing the filter into prohap, removes).
 
+**As built in 0.2.0**, as `src/vcf_filter_fix.py` itself (same name, arguments and printed lines), with these
+choices:
+
+- Input through a `gzip -dc` process; output compressed by a thread with zlib at level 1 (the conda environment's
+  zlib compresses this text twice as fast as macOS's `/usr/bin/gzip -1`).
+- A biallelic line with FORMAT `GT` whose tokens are all `a|b` or `a/b` is written as it was read: the reference's
+  output for it is the line itself.
+- Up to nine ALT alleles on the fast path; lines outside it (FORMAT other than `GT`, other tokens, other whitespace,
+  ten or more alleles) go through the reference's loop body for one line, copied into the script as
+  `reference_line`. A carriage return or non-ASCII byte anywhere hands the whole run to the reference.
+- `<file> is empty!` is printed at the end, before the counts, so stdout is the reference's even when a later file
+  hands the run over.
+- `tests/test_filter_fast.py` runs both scripts on a crafted VCF per path and per trigger.
+
+Measured 2026-11-19 with `bench.py` on the quiet Mac, one thread (CPU-s of the filter step, wall seconds in
+brackets): 0.9 (0.6) at 10k and 2.8 (1.6) at 26k on the benchmark block, against the reference's 24.4 and 76.5
+(§5): 27× both; 174.1 (99.9) for the block at 500k, 0.5 GB; 86.2 (49.2) for TTN at 500k.
+
 ---
 
 ## 3. `prohap_fast.py` (R1, R2): drop-in for `prohap.py`

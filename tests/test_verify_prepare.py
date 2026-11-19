@@ -375,3 +375,13 @@ def test_vcfcut_errors(tmp_path):
     write(tmp_path / 'nohead.vcf', '##fileformat=VCFv4.2\n22\t100\t.\tA\tG\t.\tPASS\t.\tGT\t0|1\n')
     with pytest.raises(ValueError, match='no #CHROM header line'):
         vcfcut.cut(str(tmp_path / 'nohead.vcf'), str(tmp_path / 'out.vcf'), {b'A'})
+
+
+def test_fallbacks_listed_from_the_log(tmp_path):
+    log = tmp_path / 'fast.log'
+    log.write_text('rule x:\nProHap-fast: falling back to the reference code (prohap.py): unphased genotype\nDone\n')
+    assert verify.fallbacks(str(log)) == ['ProHap-fast: falling back to the reference code (prohap.py): '
+                                          'unphased genotype']
+    sys.path.insert(0, str(ROOT / 'src'))
+    from modules import fallback
+    assert fallback.MESSAGE == verify.FALLBACK

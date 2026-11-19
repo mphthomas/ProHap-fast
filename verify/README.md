@@ -82,6 +82,12 @@ come the wall and CPU time of each run.
 The exit status is 0 only when every output is identical, 1 when any output differs or the ProHap-fast run fails,
 and 2 when `verify` itself cannot run or the reference run fails.
 
+ProHap-fast never guesses at input it does not handle: the script hands such input to the reference script of the
+same name, which writes that step's outputs (for example a carriage return or a non-ASCII byte in the VCF, unphased
+genotypes reaching `prohap.py`, or sample metadata the reference would stop on). `verify` lists these steps, with the
+reason, after the ProHap-fast run. Their outputs are compared as usual, but for them the comparison checks the
+reference against itself, and the step runs at the reference's speed.
+
 ## Checks before the runs
 
 `verify` reads the header and the first 1,000 records (at most 256 MB) of every VCF chunk and warns about input that ProHap mishandles

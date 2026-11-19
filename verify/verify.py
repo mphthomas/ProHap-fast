@@ -29,6 +29,10 @@ Subsetting, applied to both arms alike:
 
 Each arm needs its own work directory: switching `implementation` in a directory that already holds outputs reruns
 nothing, because Snakemake sees the same rules with the same code and the outputs up to date.
+
+A fast script that meets input it does not handle hands it to the reference script of the same name, which then
+writes that step's outputs; verify lists such steps after the fast arm has run. Their outputs are compared all the
+same, but for them the comparison checks the reference against itself.
 """
 import argparse
 import concurrent.futures
@@ -493,6 +497,15 @@ def tail(path, n=30):
         return ''.join(fh.readlines()[-n:])
 
 
+FALLBACK = 'ProHap-fast: falling back to the reference code'     # src/modules/fallback.py
+
+
+def fallbacks(path):
+    """The lines of a run's log in which a fast script handed its input to the reference script."""
+    with open(path, errors='replace') as fh:
+        return [line.rstrip('\n') for line in fh if FALLBACK in line]
+
+
 def prepare_list_with_rule(run):
     """Build a transcript list that a rule makes in the work directory, once, with the legacy arm's config."""
     def prepare(target):
@@ -567,6 +580,11 @@ def main(argv=None):
             say('running the %s arm; log: %s' % (arm, os.path.relpath(log, cwd)))
             code, wall, cpu = timed_snakemake(run.arm_dir(arm), args.cores, log, ['--notemp'], snakefiles[arm])
             times[arm] = (wall, cpu, code)
+            handed_over = fallbacks(log) if arm == 'fast' else []
+            if handed_over:
+                say('note: %d step(s) of the fast arm handed their input to the reference code, which then wrote '
+                    'their outputs (input the fast code does not handle, IMPLEMENTATION_NOTES section 3.7):\n  %s'
+                    % (len(handed_over), '\n  '.join(line[:300] for line in handed_over)))
             if code != 0:
                 say('%s arm FAILED (exit %d); the end of its log:\n%s' % (arm, code, tail(log)))
                 if arm == 'legacy':
