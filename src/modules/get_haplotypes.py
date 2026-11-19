@@ -141,6 +141,10 @@ def get_gene_haplotypes(all_transcripts, indiv_ids, tmp_dir, log_file, threads, 
                     haplo_combinations.insert(nearest_idx, hap2)
                     haplo_samples.insert(nearest_idx, [indiv + ':2'])    
 
+        # the variant columns as lists, read once: vcf_df.iloc[idx] built a row of every sample column per haplotype
+        # and variant. str() of a list element equals str() of the numpy scalar iloc gave (200000.0, nan, 123, True)
+        col_POS, col_REF, col_ALT, col_ID, col_INFO = (vcf_df[c].tolist() for c in ('POS', 'REF', 'ALT', 'ID', 'INFO'))
+
         # once all individuals in this VCF have been processed -> summarize observed haplotypes, compute worldwide frequencies
         for i,combination in enumerate(haplo_combinations):
             if combination == 'REF':
@@ -158,14 +162,12 @@ def get_gene_haplotypes(all_transcripts, indiv_ids, tmp_dir, log_file, threads, 
                 vcf_IDs = []    # IDs in the VCF file
 
                 for idx in indexes:
-                    row = vcf_df.iloc[idx]
+                    vcf_IDs.append(str(col_ID[idx]))
 
-                    vcf_IDs.append(str(row['ID']))
-
-                    changelist.append([row['POS'], row['REF'], row['ALT']])
-                    changes.append(str(row['POS']) + ':' + row['REF'] + '>' + row['ALT'])
-                    if 'AF' in row['INFO']:
-                        AFs.append(row['INFO'].split('AF=')[1].split(';')[0].split(maxsplit=1)[0])
+                    changelist.append([col_POS[idx], col_REF[idx], col_ALT[idx]])
+                    changes.append(str(col_POS[idx]) + ':' + col_REF[idx] + '>' + col_ALT[idx])
+                    if 'AF' in col_INFO[idx]:
+                        AFs.append(col_INFO[idx].split('AF=')[1].split(';')[0].split(maxsplit=1)[0])
                     else:
                         AFs.append('-1')
 

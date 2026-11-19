@@ -111,7 +111,9 @@ reference proteome, `merge_duplicate_seq` and `fasta_simplify_headers` (about 5 
 
 ## 1. Quick wins on the legacy code (P1–P4, D3): exact, small
 
-Apply to a copy of `legacy/src` to make the first `src/`. All five were verified byte-identical.
+Apply to a copy of `legacy/src` to make the first `src/`. All five were verified byte-identical. Rebuilt in M6
+(0.1.0); `tests/test_quick_wins.py` also compares each changed function with the reference on small crafted
+inputs, for the unit CI.
 
 **P1, `modules/get_haplotypes.py` (biggest win, 12 lines).** Before the loop over `haplo_combinations`:
 
@@ -145,6 +147,16 @@ chunk-by-chunk typing, so `.`-derived IDs such as `1e2` stay `1e2` instead of th
 
 Measured, `prohap.py` CPU-s on the benchmark block (10k / 26k samples): legacy 589 / 2,008; P2 alone 512 / 1,898;
 P1 alone 128 / 492; P1–P4 101 / 406; P1–P4+P6 89 / 315 (not exact).
+
+Rebuilt in M6 (0.1.0) and measured 2026-11-19 in the tree of each commit, one tree at a time, on the quiet Mac of
+§5's legacy baseline: `python3 bench/bench.py --samples 10000,26000 --arms fast`, which runs `prohap.py` on the
+benchmark block (§5) with one thread. CPU seconds of `prohap.py`, the peak RSS of its process tree, and its phases at
+26k:
+
+| `src/` | 10k CPU-s | 26k CPU-s | 26k peak RSS | 26k phases (s): sweep / haplotypes / proteins |
+| --- | ---: | ---: | ---: | --- |
+| legacy (§5) | 530.6 | 2,567.2 | 12.3 GB | 243.3 / 2,302.5 / 41.1 |
+| P1 | 124.4 | 509.6 | 12.3 GB | 250.0 / 213.1 / 42.5 |
 
 ---
 
