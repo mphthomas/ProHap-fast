@@ -1,5 +1,4 @@
-from modules.common import read_fasta, KeyWrapper
-import bisect
+from modules.common import read_fasta
 import argparse
 import gzip
 
@@ -15,7 +14,9 @@ args = parser.parse_args()
 
 all_proteins = read_fasta(args.input_file)
 
-result_proteins = []
+# one entry per sequence hash, sorted by hash once at the end. The reference kept a list sorted by hash with unique
+# keys (bisect + insert, quadratic in the number of sequences), so the order is the same
+result_by_hash = {}
 
 for protein in all_proteins.values():
 	seq = protein['sequence']
@@ -43,16 +44,18 @@ for protein in all_proteins.values():
 		protein_start = '0'
 		seq_position = '0'
 
-	nearest_idx = bisect.bisect_left(KeyWrapper(result_proteins, key=lambda x: x['hash']), seq_hash)
-	if (len(result_proteins) > nearest_idx and result_proteins[nearest_idx]['hash'] == seq_hash):
-		result_proteins[nearest_idx]['matching_proteins'].append(matching_proteins)
-		result_proteins[nearest_idx]['rfs'].append(rfs)
-		result_proteins[nearest_idx]['split_sequences'].append(protein['accession'])
-		result_proteins[nearest_idx]['tags'].append(protein['tag'])
-		result_proteins[nearest_idx]['start'].append(protein_start)
-		result_proteins[nearest_idx]['seq_position'].append(seq_position)
+	entry = result_by_hash.get(seq_hash)
+	if entry is not None:
+		entry['matching_proteins'].append(matching_proteins)
+		entry['rfs'].append(rfs)
+		entry['split_sequences'].append(protein['accession'])
+		entry['tags'].append(protein['tag'])
+		entry['start'].append(protein_start)
+		entry['seq_position'].append(seq_position)
 	else:
-		result_proteins.insert(nearest_idx, {'hash': seq_hash, 'matching_proteins': [matching_proteins], 'split_sequences': [protein['accession']], 'tags': [protein['tag']], 'sequence': seq, 'start': [protein_start], 'seq_position': [seq_position], 'rfs': [rfs]})
+		result_by_hash[seq_hash] = {'hash': seq_hash, 'matching_proteins': [matching_proteins], 'split_sequences': [protein['accession']], 'tags': [protein['tag']], 'sequence': seq, 'start': [protein_start], 'seq_position': [seq_position], 'rfs': [rfs]}
+
+result_proteins = [ result_by_hash[seq_hash] for seq_hash in sorted(result_by_hash) ]
 
 outfile = gzip.open(args.output_file, 'wt') if args.output_file.endswith('.gz') else open(args.output_file, 'w')
 

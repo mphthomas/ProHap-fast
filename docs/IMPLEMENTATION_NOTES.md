@@ -173,6 +173,10 @@ the design work (P1 128 / 492, P1–P4 101 / 406), 10k is 3–7% faster and 26k 
 together on the block: 117.6 / 499.4 CPU-s against 555.0 / 2,643.7 (4.7× / 5.3×); genome-wide at 26k by the scale
 factor, 44 CPU-h on this Mac instead of 231.
 
+D3 on the `dupseq` fixture (400,000 records, 341,225 distinct sequences), `merge_duplicate_seq.py` alone, quiet Mac:
+18.7 → 9.0 CPU-s, 1.1 GB either way, output identical. The old sorted-list insert is quadratic in the number of
+distinct sequences, so the gain grows with the cohort (the design work: about 8.5 h → 4 min at 25M sequences).
+
 ---
 
 ## 2. `filter_fast.py` (F1): drop-in for `vcf_filter_fix.py`

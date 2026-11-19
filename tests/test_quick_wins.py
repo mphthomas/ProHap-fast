@@ -5,7 +5,9 @@ crafted inputs. tests/legacy_vs_fast.sh is the real check; these run in the unit
 """
 import importlib
 import io
+import os
 import random
+import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -231,3 +233,37 @@ def test_parse_vcf_matches_legacy(tmp_path):
     tables = written['legacy'][1]
     assert sorted(tables) == ['T%d.tsv' % i for i in range(1, 6)]
     assert sum(len(t.splitlines()) - 1 for t in tables.values()) > len(exons)    # lines shared by transcripts
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# D3: merge_duplicate_seq.py merges by sequence hash in a dict and sorts once
+
+
+def test_merge_duplicate_seq_matches_legacy(tmp_path):
+    """Both scripts on 60 records of 15 sequences, with every kind of header the script parses. The record order is
+    by hash(), so the scripts run with PYTHONHASHSEED=0 as in the workflow."""
+    rng = random.Random(5)
+    sequences = [''.join(rng.choice('ACDEFGHIKLMN') for _ in range(rng.randint(5, 30))) for _ in range(15)]
+    headers = [
+        'generic_ensref|ENSP{i:05d}|matching_proteins:ENST{i:05d} position_within_protein:{r}',
+        'generic_enshap|enshap_22_{i:x}|matching_proteins:haplo_chr22_{i:x};haplo_chr22_{j:x} start:{r} '
+        'reading_frame:{r};{s}',
+        'generic_var|var_{i}|matching_proteins:var_{i} start:0 reading_frame:{r} position_within_protein:{s}',
+        'generic_cont|CONT{i}|contaminant {i}',
+        'sp|P{i:05d}|Swiss-Prot entry {i}',
+    ]
+    fasta = tmp_path / 'input.fa'
+    with open(fasta, 'w') as out:
+        for i in range(60):
+            header = headers[i % 5].format(i=i, j=i + 100, r=rng.randint(0, 2), s=rng.randint(0, 2))
+            out.write('>' + header + '\n' + rng.choice(sequences) + '\n')
+
+    env = dict(os.environ, PYTHONHASHSEED='0', PYTHONNOUSERSITE='1')
+    outputs = {}
+    for arm in ('legacy', 'fast'):
+        result = tmp_path / (arm + '.fa')
+        subprocess.run([sys.executable, str(TREES[arm] / 'merge_duplicate_seq.py'), '-i', str(fasta), '-o',
+                        str(result)], env=env, check=True)
+        outputs[arm] = result.read_text()
+    assert outputs['fast'] == outputs['legacy']
+    assert outputs['legacy'].count('>') == len(set(sequences))
