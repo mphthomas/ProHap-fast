@@ -10,6 +10,8 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-19
+
 ### Added
 
 - **`verify` checks ProHap-fast against the reference on your own data.** Run from the directory that holds
@@ -31,6 +33,20 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 
 ### Changed
 
+- **`prohap.py` is about 6× faster at 10,000–26,000 samples, uses less than 40% of the memory at 26,000, and writes
+  the same output.** Four small changes to the reference code, each checked byte for byte against it on every test
+  fixture: the variant columns of a transcript's table are read once as lists, where the reference built a row of
+  every sample per haplotype and variant (the largest gain); sample sex and populations are looked up in dicts;
+  haplotypes are grouped by transcript once; and each transcript's VCF lines are collected in a list and joined
+  once, where the reference grew one string per transcript (the memory saving). On the benchmark block (60
+  transcripts of chromosome 22, simulated, one thread) `prohap.py` takes 94.1 CPU-s instead of 530.6 at 10,000
+  samples, and 421.9 instead of 2,567.2 at 26,000, with a peak of 4.7 GB instead of 12.3. It still grows
+  faster than the cohort, because its per-transcript tables have one column per sample; the rewrite for 100,000
+  samples and more comes in 0.2.0.
+- **`merge_duplicate_seq.py` no longer slows down quadratically with the number of sequences.** It kept the
+  sequences in a list sorted by hash and inserted each new one; it now collects them in a dict and sorts once, in
+  the same order. 400,000 protein records take 9.0 CPU-s instead of 18.7, and the gain grows with the
+  number of sequences: the design work estimated 4 minutes instead of 8.5 hours for 25 million.
 - **Ensembl references are pre-built and read in place; nothing is downloaded.** Everything the workflow derives
   from the Ensembl release (whole-genome and per-chromosome gffutils DBs, the MANE transcript list, the merged cDNA,
   the tagged reference proteome and the tagged contaminants) is read from `<refs_dir>/ensembl.v<ensembl_release>/`,
@@ -73,4 +89,5 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   name ends in `.gz`: the table holds only the header line and the FASTA is empty. Names without `.gz` are written
   as before. As upstream, no cDNA FASTA is written for such a chromosome.
 
-[Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/cafcc51...HEAD
+[Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/mphthomas/ProHap-fast/compare/cafcc51...v0.1.0

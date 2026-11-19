@@ -14,11 +14,12 @@ thousands of phased whole-genome samples in one run, inside a Trusted Research E
   and the tagged contaminants.
 - **Docker or Singularity/Apptainer**, as any user.
 
-**Status: development (0.1.0-dev).** The workflow, the release image and `verify` are in place, but `src/`, the
-fast implementation, is still the reference code: runs are exactly as fast as ProHap. The speed-ups land in later
-releases, each checked against the reference on every fixture; see the plan in
-[docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md). ProVar (individual variants) runs unchanged from
-upstream in every release.
+**Status: 0.1.0.** `src/`, the fast implementation, is the reference code with five small changes that keep the
+output byte-identical: `prohap.py`, the step that grows with the cohort, is about 6× faster than ProHap at
+26,000 samples and needs less than 40% of the memory. It still grows faster than the cohort; the rewrite for 100,000
+samples and more comes in 0.2.0. Every release is checked against the reference on every fixture; see
+[docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md) for the plan and the measurements. ProVar (individual
+variants) runs unchanged from upstream in every release.
 
 When you use ProHap-fast, please cite the ProHap paper ([below](#citation-and-licence)).
 
@@ -37,12 +38,12 @@ When you use ProHap-fast, please cite the ProHap paper ([below](#citation-and-li
 ## Quick start
 
 The 1000 Genomes example of this repository (2,548 samples, common variants, 23 chromosomes), with the image of
-Ensembl release 113. Until images are published (from 0.1.0), build it first, for your machine's platform:
+Ensembl release 113 from Docker Hub (about 9 GB; or [build it](#building-the-image)):
 
 ```bash
 git clone https://github.com/mphthomas/ProHap-fast.git && cd ProHap-fast
-container/build_image.sh --platform linux/amd64      # linux/arm64 on Apple Silicon; about 10 minutes
-IMAGE=prohap-fast:$(cat VERSION)-ensembl.v113
+IMAGE=mphthomas/prohap-fast:0.1.0-ensembl.v113
+docker pull $IMAGE
 
 tar -xzf sample_data/sample_1kGP_common_global.tar.gz -C sample_data
 cp config_example1.yaml config.yaml
@@ -65,8 +66,9 @@ version, commit and build date in the `org.opencontainers.image.*` labels).
   different releases differ by design.
 - Images are built for `linux/amd64` (Linux servers, HPC, TREs) and `linux/arm64` (Apple Silicon). They are about
   9 GB, of which the references take 8.2 GB.
-- From release 0.1.0 on, images are published on Docker Hub as `mphthomas/prohap-fast:<version>-ensembl.v<release>`.
-  Until then, [build the image](#building-the-image) yourself.
+- Images are published on Docker Hub as `mphthomas/prohap-fast:<version>-ensembl.v<release>`, from 0.1.0: one tag
+  for both platforms, and the same tag with `-amd64` or `-arm64` for one. The examples below use the published
+  name; an image you [build](#building-the-image) yourself is `prohap-fast:<version>-ensembl.v<release>`.
 - For a TRE without registry access, transfer the image as a file. The smallest is a SIF built outside (about
   1.3 GB): `singularity build prohap-fast.sif docker-daemon:IMAGE`, or from a registry with `docker://`. A Docker
   archive also works: `docker save -o prohap-fast.tar IMAGE` (9 GB; gzip it for the transfer, to about 1.6 GB),
@@ -88,7 +90,7 @@ docker run --rm -u "$(id -u):$(id -g)" \
     -v "$PWD":"$PWD" -w "$PWD" \
     -v /data/phased_vcfs:/data/phased_vcfs:ro \
     -v /results/prohap:/results/prohap \
-    prohap-fast:0.1.0-ensembl.v113 --cores 16 -p
+    mphthomas/prohap-fast:0.1.0-ensembl.v113 --cores 16 -p
 ```
 
 - Mount every path `config.yaml` refers to (VCFs, sample metadata, outputs) at the same path inside the container,
@@ -135,7 +137,7 @@ status 0 only when every output is identical.
 
 ```bash
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":"$PWD" -w "$PWD" -v /data:/data:ro \
-    prohap-fast:0.1.0-ensembl.v113 verify --cores 8 --chromosomes 21,22 --samples 2000 --transcripts 50
+    mphthomas/prohap-fast:0.1.0-ensembl.v113 verify --cores 8 --chromosomes 21,22 --samples 2000 --transcripts 50
 ```
 
 The reference is slow at cohort scale (about 2,000 CPU seconds per 60 transcripts at 26,000 samples), so restrict
@@ -191,8 +193,7 @@ job, so `--cores` divided by `max_cores` is the number of chromosomes in flight.
 The per-chromosome steps are mostly single-threaded, so parallelism across chromosomes matters more than threads
 within one.
 
-For the current release, which runs at the reference's speed, a cohort of about 27,000 samples with one VCF per
-chromosome needs, as a starting point:
+A cohort of about 27,000 samples with one VCF per chromosome needs, as a starting point, at most:
 
 | Resource | Suggested | Notes |
 | --- | --- | --- |
@@ -201,7 +202,9 @@ chromosome needs, as a starting point:
 | Scratch | 300–500 GB | the per-transcript tables hold every sample column until their chromosome finishes |
 
 Run one chromosome first (`verify --chromosomes 22`, or `chromosomes: ["22"]`) and measure before a genome-wide
-run. Releases with the speed-ups will update this table.
+run. The table was measured with the reference code on a TRE; 0.1.0 needs less (on the benchmark block at 26,000
+samples, `prohap.py` takes a sixth of the CPU time and less than 40% of the memory). The rewrite in 0.2.0 will
+replace it.
 
 ## Building the image
 
