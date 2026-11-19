@@ -310,8 +310,9 @@ def test_bench_harness(refs, dataset, tmp_path):
                                                   for s in ('filter', 'prohap')]
     prohap = [r for r in rows if r[8] == 'prohap']
     assert all(float(r[11]) > 0 and float(r[13]) > 0 for r in prohap)
-    assert all([p.split('=')[0] for p in r[14].split(';')] == ['setup', 'sweep', 'haplotypes', 'cdna', 'proteins',
-                                                                'write'] for r in prohap)
+    expected = {'legacy': ['setup', 'sweep', 'haplotypes', 'cdna', 'proteins', 'write'],
+                'fast': ['setup', 'cdna', 'sweep', 'write']}
+    assert all([p.split('=')[0] for p in r[14].split(';')] == expected[r[7]] for r in prohap)
 
 
 def test_simulate_fasta(refs, tmp_path):

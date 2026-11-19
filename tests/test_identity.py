@@ -116,7 +116,7 @@ def test_changed_fast_code_is_different(tmp_path, sample_data):
     file DIFFERENT, everything else IDENTICAL, and exit with status 1."""
     fast_src = tmp_path / 'src'
     shutil.copytree(ROOT / 'src', fast_src, ignore=shutil.ignore_patterns('__pycache__'))
-    module = fast_src / 'modules' / 'get_haplotypes.py'
+    module = fast_src / 'prohap.py'
     code = module.read_text()
     assert code.count("'TranscriptID\\t#Removed\\tRemovedSamples\\n'") == 1
     module.write_text(code.replace("'TranscriptID\\t#Removed", "'TranscriptId\\t#Removed"))

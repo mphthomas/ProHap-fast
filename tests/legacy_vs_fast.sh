@@ -14,8 +14,9 @@
 #   -j       cores for each Snakemake run (default 8)
 #   -k       keep the work directory even when everything is identical
 #
-# Measured with -j 8 on an Apple Silicon Mac: small 3 minutes, medium 28, large 65 (55 of them the 26,000-sample
-# fixture). tests/fixtures/sim/README.md says what each fixture tests. For a workflow fixture, two work directories,
+# Measured with -j 8 on an Apple Silicon Mac (0.2.0): small 4 minutes, medium 15, large 34 (28 of them the reference
+# on the 26,000-sample fixture); a fast run takes 15-35 s, mostly steps both arms share. tests/fixtures/sim/README.md
+# says what each fixture tests. For a workflow fixture, two work directories,
 # legacy/ and fast/, get the same config.yaml and inputs; Snakemake runs in one with `--config
 # implementation=legacy`, then in the other with `--config implementation=fast`. Then every file either run wrote
 # is compared, after decompression (gzip headers carry a timestamp). Simulated data is generated on first use into
@@ -40,7 +41,7 @@ while getopts j:kh opt; do
     case $opt in
         j) cores=$OPTARG ;;
         k) keep=1 ;;
-        *) sed -n '2,28p' "$0"; exit 2 ;;
+        *) sed -n '2,29p' "$0"; exit 2 ;;
     esac
 done
 shift $((OPTIND - 1))

@@ -481,14 +481,15 @@ def timed_snakemake(*args, **kwargs):
 
 
 def fast_src_workflow(run, fast_src):
-    """A copy of the workflow whose src/ is fast_src (for --fast-src): the Snakefile is copied, and legacy/, tools/
-    and envs/ link to this checkout's."""
+    """A copy of the workflow whose src/ is a copy of fast_src (for --fast-src): legacy/, tools/ and envs/ link to
+    this checkout's. src/ is copied, not linked: the fast scripts find legacy/src and tools/ next to their own
+    directory, after resolving links."""
     wf = os.path.join(run.dir, 'workflow_fast')
     os.makedirs(wf)
     shutil.copy(SNAKEFILE, os.path.join(wf, 'Snakefile'))
     for name in ('legacy', 'tools', 'envs'):
         os.symlink(os.path.join(ROOT, name), os.path.join(wf, name))
-    os.symlink(fast_src, os.path.join(wf, 'src'))
+    shutil.copytree(fast_src, os.path.join(wf, 'src'), ignore=shutil.ignore_patterns('__pycache__'))
     return os.path.join(wf, 'Snakefile')
 
 

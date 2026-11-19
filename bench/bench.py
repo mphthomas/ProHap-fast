@@ -17,7 +17,8 @@ runs with PYTHONHASHSEED=0 (through tools/run_fork.py on macOS), in its own work
     max_mb    the largest resident memory of any single process (ru_maxrss)
     phases    for prohap.py, wall seconds between the lines it prints: setup, sweep (assigning variants to
               transcripts), haplotypes (co-occurrence and frequencies), cdna (reading the cDNA FASTA), proteins,
-              write. The fast implementation may print fewer of them.
+              write. The fast implementation reads the cDNA during setup and computes haplotypes and proteins while
+              it reads the VCF, so its phases are setup, cdna, sweep (everything streamed) and write.
 
 When two arms ran, their outputs (the filtered VCF, haplotype table, FASTA, cDNA FASTA and removed-samples log) are
 compared after decompression; the identity check proper is tests/legacy_vs_fast.sh.

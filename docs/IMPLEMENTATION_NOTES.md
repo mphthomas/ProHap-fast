@@ -335,6 +335,86 @@ haplotype rows, including REF and later-dropped ones), keeps the FASTA accession
 multi-character genotypes, extra FORMAT fields, quotes, CR or non-ASCII bytes, duplicate sample or transcript IDs,
 hash collisions (§3.4), and the setup and record checks in §3.1–§3.3.
 
+### 3.8 As built in 0.2.0
+
+`src/prohap.py` keeps the reference's arguments and printed lines (plus one line saying how many workers it uses)
+and is built from these modules, each tested against the reference functions it replaces:
+
+| Module | Does | Tested by |
+| --- | --- | --- |
+| `fallback.py` | `to_legacy(__file__, reason)`: `os.execv` of the `legacy/src` script with the same arguments, through `tools/run_fork.py` where fork is not the default; the reason goes to stderr after `ProHap-fast: falling back to the reference code`. `PROHAP_FALLBACK=error` stops instead (exit 3). | `test_fast_helpers.py` |
+| `legacy_import.py` | `legacy.<module>`: the `legacy/src/modules` files, imported once with `modules` pointing at the reference directory | `test_fast_helpers.py` |
+| `pandas_emulation.py` | §3.3 | `test_pandas_emulation.py` |
+| `sweep.py` | §3.2: `VCFReader` (bytes through `gzip -dc`), `read_header`, `RecordParser`, `assign_records` | `test_sweep.py` |
+| `haplotypes.py` | §3.4: `Cohort` (metadata as `get_gene_haplotypes` reads it), `group_copies`, `transcript_rows`, lazy `Row` strings | `test_haplotypes.py` |
+| `proteins.py` | §3.5: `process_transcript`, `translate`, `get_affected_codons`, `add_population_freqs` | `test_proteins.py` |
+| `cdna.py` | the transcripts' cDNA as `read_fasta(..., True)` gives it, without a dict of the whole file | `test_cdna.py` |
+
+`test_prohap_fast.py` runs both scripts on a crafted chromosome (a gffutils DB built from a GTF): the fast path with
+1–3 workers and the threshold and flag settings, and one case per fallback trigger. `tests/legacy_vs_fast.sh` now
+fails when a fast run fell back (it would compare the reference with itself), and `verify` lists such steps.
+
+Choices made while building it, none of which changes output:
+
+- **The setup reads the cDNA of the listed transcripts only** (`cdna.py`): the whole FASTA in one piece, records
+  found by `\n>`, every header parsed with `read_fasta`'s own rules, later records with the same ID replacing
+  earlier ones. 0.6 s instead of 2.2 s for the v113 cDNA, and the workers do not inherit a dict of 250,000
+  sequences.
+- **Transcript annotations are read in the parent** (exons, first start and stop codon, biotype) before the `Pool`
+  forks, instead of a `FeatureDB` per worker.
+- **Grouping** adds two random 64-bit weights per record into arrays of one entry per haplotype copy (kept zeroed
+  between transcripts), groups the carrying copies by (number of records, two sums), and checks the grouping record
+  by record: each group must have all or none of its members among a record's carriers, or the run falls back. One
+  stable sort then gathers each group's records. Memory is one entry per copy plus one per (group, record) pair,
+  never one per (copy, record) pair (§6).
+- **Conflicts**: `cluster_conflicting_mutations` joins records whose spans `[POS, POS + len(REF)]` overlap or touch,
+  so it is called only for groups with at least two records that meet another record; the others cannot conflict.
+- **Population strings** are counted in Python for up to 64 copies and with `np.unique` above. Merged rows add them
+  with an exact re-implementation of `add_population_freqs` applied left to right (each step reads back the
+  five-decimal sums the previous one wrote); population codes with `:` or `;`, which the reference splits on, fall
+  back.
+- **`translate`** caches the translations of short sequences (the codons around a change); the reference's
+  `check_protein_allele` results are cached per transcript.
+- **The workers return finished rows**; the parent names the haplotypes (`<prefix>_<hex(offset + i)>`), numbers the
+  accessions and writes the table through `DataFrame.to_csv` every 20,000 rows. Output tables and FASTAs ending in
+  `.gz` are written at gzip level 1.
+- **Fallback triggers** (§3.7), as built: in the VCF, a carriage return or non-ASCII byte anywhere, a header not
+  starting with the nine VCF columns, no samples, an empty, repeated or quoted sample name, a data line with fewer
+  than ten fields, whitespace other than single tabs, quotes or control characters in the first nine fields, POS
+  other than plain digits, FORMAT other than `GT`, and, in records that fall in an exon, INFO that pandas might not
+  read as text or genotypes other than `a|b` with one character per allele (unphased `a/b` included, as CLAUDE.md
+  lists it); in the setup, `-af` above 0, a transcript listed twice, no transcript while the VCF has records (the
+  reference stops), a metadata name like a VCF column, a sample name with `:` or `;`, a sample with two metadata
+  rows, a population code that is missing, not text or contains `:` or `;`, an output table compressed other than by
+  gzip; while running, a start or stop codon outside the exons (the reference stops) and a hash collision. The
+  reference then stops where it stops (`test_prohap_fast.py`, cases `duplicate_transcript`,
+  `duplicate_metadata_row`, `no_sample_in_metadata`, `no_transcript_for_the_records`).
+
+Measured 2026-11-19 with `bench.py` on the quiet Mac (one thread unless stated; CPU seconds of the filter and of
+`prohap.py`, the wall seconds and peak memory of `prohap.py`'s process tree; 0.1.0 from §1, the reference from §5):
+
+| Data | Samples | filter | prohap | together | prohap wall | prohap peak | 0.1.0 | reference |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| block | 10,000 | 0.9 | 4.3 | 5.2 | 4.0 | 0.8 GB | 117.6 | 555.0 |
+| block | 26,000 | 2.8 | 7.7 | 10.5 | 6.2 | 0.8 GB | 499.4 | 2,643.7 |
+| block | 500,000 | 174.1 | 121.6 | 295.7 | 76.1 | 1.9 GB | | |
+| block, 4 threads | 500,000 | 171.3 | 122.2 | 293.5 | 76.7 | 4.0 GB | | |
+| TTN | 26,000 | 1.4 | 20.3 | 21.7 | 20.4 | 0.8 GB | | |
+| TTN | 500,000 | 86.2 | 431.2 | 517.4 | 421.6 | 6.4 GB | | |
+| `n100000` chr21 / chr22 | 100,000 | 0.3 / 0.3 | 1.3 / 1.3 | 1.6 / 1.6 | 1.3 / 1.4 | 0.9 GB | | 116.7 / 138.9 |
+
+- Against the design work's targets: 10.5 CPU-s at 26k (13.5), 296 CPU-s and 4.0 GB with four workers at 500k
+  (351, 4.3 GB), TTN 21.7 CPU-s at 26k (about 30) and 517 CPU-s, 6.4 GB at 500k (546, 6.7 GB). At 26k the block
+  costs a 252nd of the reference's CPU time.
+- Below 100,000 samples most of the memory is the setup (pandas, gffutils, reading the cDNA file once: 0.8 GB). At
+  500,000 the reader is the bottleneck: `prohap.py` takes 76 s with one worker and with four.
+- TTN at 500,000: 991,022 of the 1,000,000 haplotype copies have a haplotype of their own, each with a
+  35,000-residue protein; the protein port takes about 290 s of the 431. Its largest process peaks at 4.8 GB (the
+  worker: the transcript's haplotypes, its distinct proteins, and the result on its way to the parent). A
+  chromosome-2 job with four workers adds three other workers' transcripts to that.
+- Genome-wide by the scale factor (§5, block × 315): 26 CPU-h at 500,000 samples on this Mac (the design work: 31;
+  the reference cannot run at that size), 0.9 CPU-h at 26,000 (the reference: 231, 0.1.0: 44).
+
 ---
 
 ## 4. `merge_fast.py` / `extract_fast.py` (D1, D2)
@@ -480,6 +560,23 @@ under 100 MB. Setup, cDNA and write take 0.2–2.2 s each. Wall time is CPU time
   matching` lines into block-buffered stdout, so their position changes between two runs of the same code (seen on
   1kG chr22 with all 8,237 transcripts, 2026-11-17). Compare stdout as a set of lines, never byte for byte. The
   removed-samples log is written by the parent and is stable.
+
+Found while building 0.2.0:
+
+- pandas reads booleans without regard to case (`tRuE` is `True`), and its float parser is not correctly rounded
+  beyond 10^22 (`3e23` becomes `2.9999999999999997e+23`). `is_safe_str` is conservative and `_kind` types only plain
+  integers, decimals of at most 15 digits and exponents up to 22 itself (`test_pandas_emulation.py`).
+- `concat_compat` of a boolean chunk and an integer chunk casts the booleans to 1 and 0, then the column to object,
+  so `True` reads back as `1`. Calling pandas' own `concat_compat` keeps this.
+- A one-column `to_csv` writes an empty value as `""` (the csv module marks a row with one empty field), so the
+  emulation writes a second, dummy column.
+- Forked workers inherit stdout's unwritten buffer, and a worker that prints would write it out again; `prohap.py`
+  flushes stdout before it creates the `Pool`.
+- The fast scripts find `legacy/src` and `tools/` next to their own directory after resolving links, so `verify
+  --fast-src` copies the directory instead of linking it.
+- At 500,000 samples nearly every copy of TTN is its own haplotype (991,022 groups, 56M (copy, record) pairs): a
+  grouping that sorts all pairs held 3.4 GB; scatter-adding hashes into arrays of one entry per copy and checking
+  the groups record by record holds 1.5 GB.
 
 ---
 
