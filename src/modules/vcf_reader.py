@@ -49,7 +49,7 @@ def add_variants_to_transcripts(vcf_file_line, vcf_file, vcf_linecount, transcri
                 for exon in transcript_entry['exons']:
                     if (exon.start < (current_pos + len(REF))):
                         if (exon.end >= current_pos):
-                            transcript_entry['file_content'] += vcf_file_line
+                            transcript_entry['file_content'].append(vcf_file_line)
                             break
                     else:
                         break   # exon starts after the mutation -> continue to another transcript
@@ -63,7 +63,7 @@ def add_variants_to_transcripts(vcf_file_line, vcf_file, vcf_linecount, transcri
 
     # remove passed transcripts from queue
     while (len(transcript_queue) > 0 and (transcript_queue[0]['end'] < current_pos or finalize)):
-        df = pd.read_csv(StringIO(VCF_header + transcript_queue[0]['file_content']), sep='\t')
+        df = pd.read_csv(StringIO(VCF_header + ''.join(transcript_queue[0]['file_content'])), sep='\t')
         df.to_csv(tmp_dir + '/' + transcript_queue[0]['ID'] + '.tsv', sep='\t', index=False, header=True)
         #result_dfs[transcript_queue[0]['ID']] = df
         transcript_queue.pop(0)
@@ -114,7 +114,7 @@ def parse_vcf(all_transcripts, vcf_file, annotations_db, min_af, tmp_dir):
 
         # add the new transcript to the queue    
         exons = [ exon for exon in annotations_db.children(current_transcript, featuretype='exon', order_by='start') ]
-        queue_entry = { 'transcript_obj': current_transcript, 'ID': current_transcript.id, 'exons': exons, 'start': current_transcript.start, 'end': current_transcript.end, 'file_content': "" }
+        queue_entry = { 'transcript_obj': current_transcript, 'ID': current_transcript.id, 'exons': exons, 'start': current_transcript.start, 'end': current_transcript.end, 'file_content': [] }   # lines, joined when written
         nearest_idx = bisect.bisect_left(KeyWrapper(transcript_queue, key=lambda x: x['end']), queue_entry['end'])
         transcript_queue.insert(nearest_idx, queue_entry)
 

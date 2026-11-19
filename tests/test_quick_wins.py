@@ -188,3 +188,46 @@ def test_metadata_name_listed_twice(tmp_path, monkeypatch):
     for arm in ('legacy', 'fast'):
         with pytest.raises(ValueError, match='truth value of a Series is ambiguous'):
             run_get_gene_haplotypes(arm, tmp_path, monkeypatch, True, edit)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# P4: vcf_reader.py collects each transcript's VCF lines in a list and joins them once
+
+
+class FakeDB:
+    """The one gffutils call parse_vcf makes: the exons of a transcript, ordered by start."""
+    def __init__(self, exons):
+        self.exons = exons
+
+    def children(self, transcript, featuretype, order_by):
+        assert (featuretype, order_by) == ('exon', 'start')
+        return [SimpleNamespace(start=s, end=e) for s, e in self.exons[transcript.id]]
+
+
+def test_parse_vcf_matches_legacy(tmp_path):
+    rng = random.Random(3)
+    exons = {'T1': [(1000, 1100), (1500, 1600)], 'T2': [(1050, 1080), (1550, 1700)], 'T3': [(1520, 1530)],
+             'T4': [(5000, 5100)], 'T5': [(9000, 9100)]}
+    transcripts = [SimpleNamespace(id=t, start=e[0][0], end=e[-1][1]) for t, e in exons.items()]
+    samples = ['S%d' % i for i in range(1, 9)]
+    lines = ['##fileformat=VCFv4.2', '##contig=<ID=22>', '#' + '\t'.join(VCF_COLUMNS + samples)]
+    positions = [500, 1000, 1001, 1060, 1098, 1100, 1300, 1495, 1525, 1525, 1560, 1650, 3000, 5050, 5100, 7000]
+    for n, pos in enumerate(positions):
+        ref, alt = rng.choice([('A', 'G'), ('C', 'T'), ('ACGTA', 'A'), ('G', 'GTT'), ('T', 'C,G'), ('N', 'A')])
+        vcf_id = rng.choice(['.', '.', 'rs%d' % n, '2e5', 'NA'])
+        af = rng.choice(['0.01', '0.2', '0.5'])
+        gts = ['%d|%d' % (rng.random() < 0.3, rng.random() < 0.3) for _ in samples]
+        lines.append('\t'.join(['22', str(pos), vcf_id, ref, alt, '.', 'PASS', 'AC=1;AN=16;AF=' + af, 'GT'] + gts))
+    text = '\n'.join(lines) + '\n'
+
+    written = {}
+    for arm in ('legacy', 'fast'):
+        out = tmp_path / arm
+        out.mkdir()
+        with modules_of(arm) as module:
+            colnames = module('vcf_reader').parse_vcf(transcripts, io.StringIO(text), FakeDB(exons), 0.05, str(out))
+        written[arm] = colnames, {p.name: p.read_bytes() for p in sorted(out.iterdir())}
+    assert written['fast'] == written['legacy']
+    tables = written['legacy'][1]
+    assert sorted(tables) == ['T%d.tsv' % i for i in range(1, 6)]
+    assert sum(len(t.splitlines()) - 1 for t in tables.values()) > len(exons)    # lines shared by transcripts

@@ -162,6 +162,16 @@ benchmark block (§5) with one thread. CPU seconds of `prohap.py`, the peak RSS 
 | P1 | 124.4 | 509.6 | 12.3 GB | 250.0 / 213.1 / 42.5 |
 | P1–P2 | 99.5 | 446.0 | 12.3 GB | 251.7 / 147.5 / 43.1 |
 | P1–P3 | 99.9 | 451.1 | 12.3 GB | 256.8 / 147.4 / 42.7 |
+| P1–P4 | 94.1 | 421.9 | 4.7 GB | 228.4 / 147.0 / 42.3 |
+
+P1 does most of it: the haplotype phase falls from 2,302 to 213 s at 26k. P2 takes another third off that phase. P3
+changes nothing measurable on 60 transcripts: the filter it replaces is one pass over the whole haplotype table per
+transcript, which shows on whole chromosomes. P4 shortens the sweep by a tenth and cuts the peak memory at 26k from
+12.3 to 4.7 GB (3.4 to 2.4 GB at 10k): the reference grew each transcript's VCF text as one string, copied whenever
+a line was added, and transcripts that share lines each held their own copy; the list holds each line once. Against
+the design work (P1 128 / 492, P1–P4 101 / 406), 10k is 3–7% faster and 26k 4% slower. Filter and `prohap.py`
+together on the block: 117.6 / 499.4 CPU-s against 555.0 / 2,643.7 (4.7× / 5.3×); genome-wide at 26k by the scale
+factor, 44 CPU-h on this Mac instead of 231.
 
 ---
 
