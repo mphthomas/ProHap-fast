@@ -380,6 +380,40 @@ Design-work measurements (prototypes, lost), CPU-s per block, legacy filter+proh
 500k: 82 s wall (reader-bound). TTN alone at 500k: 546 CPU-s, 6.7 GB. 500k block output: 117k rows, 293 MB TSV text
 (83% `samples`), 79k FASTA records.
 
+### Legacy baseline
+
+`legacy/src` on the rebuilt simulator, one thread, `-af 0` and thresholds 0, Apple Silicon Mac with nothing else
+running, 2026-11-18:
+
+```bash
+python3 bench/bench.py --samples 2500,5000,10000,26000 --arms legacy --threads 1
+python3 bench/bench.py --data tests/fixtures/sim/cache/ttn --data tests/fixtures/sim/cache/n100000 \
+    --arms legacy --threads 1
+```
+
+| Data | Samples | Records | filter CPU-s | prohap CPU-s | Total CPU-s | Design work | Peak RSS | prohap phases (s): sweep / haplotypes / proteins |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| block | 2,500 | 6,717 | 3.8 | 61.9 | 65.7 | 63 | 1.6 GB | 3.8 / 45.1 / 10.4 |
+| block | 5,000 | 9,059 | 9.1 | 168.3 | 177.4 | 202 | 2.5 GB | 11.1 / 139.1 / 15.3 |
+| block | 10,000 | 12,198 | 24.4 | 530.6 | 555.0 | 609 | 3.4 GB | 37.5 / 467.6 / 23.1 |
+| block | 26,000 | 18,414 | 76.5 | 2,567.2 | 2,643.7 | 2,072 | 12.3 GB | 243.3 / 2,302.5 / 41.1 |
+| `ttn` (TTN) | 2,500 | 3,388 | 1.7 | 142.2 | 143.9 | | 3.5 GB | 4.6 / 107.3 / 30.3 |
+| `n100000` chr21 (3 transcripts) | 100,000 | 431 | 5.4 | 111.3 | 116.7 | | 5.5 GB | 49.3 / 61.5 / 0.1 |
+| `n100000` chr22 (3 transcripts) | 100,000 | 451 | 5.6 | 133.3 | 138.9 | | 7.3 GB | 57.1 / 76.5 / 0.2 |
+
+Peak RSS is the process tree's (prohap's own `ru_maxrss` is 0–12% lower: forked workers share pages); filter stays
+under 100 MB. Setup, cDNA and write take 0.2–2.2 s each. Wall time is CPU time + 0–4%.
+
+- The haplotype phase (the per-person loop over the wide per-transcript tables) is 73–90% of prohap on the block and
+  TTN and grows as N^1.7 (2.5k → 26k: 51×); the sweep, which builds those tables, as N^1.8 (64×); filter as N^1.3
+  (20×). At 100k on 3 short transcripts the sweep is 44% of prohap.
+- 2.5k–10k are within 12% of the design work. 26k costs 28% more CPU and 48% more memory (8.3 GB there); the design
+  work did not record its record count or how it measured memory, so the cause is unknown. These numbers are the
+  baseline from now on.
+- Genome-wide at 26k by the scale factor: 2,644 × 315 = 833k CPU-s, 231 CPU-h on this Mac.
+- At 100k samples a chromosome with 3 transcripts (3 kb of exons, about 440 records) already needs 5–7 GB: the
+  per-transcript tables are N columns wide however few records they have.
+
 ---
 
 ## 6. Traps that broke identity during development
