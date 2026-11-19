@@ -10,6 +10,31 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-19
+
+### Changed
+
+- **`prohap.py` grows linearly with the cohort and runs at 500,000 samples; the output is the same.** The reference
+  wrote, and read back, a table with one column per sample for every transcript, so its cost grew faster than the
+  cohort: at 100,000 samples a chromosome with three short transcripts already needed 5–7 GB, and 500,000 samples
+  were out of reach. `prohap.py` now reads the VCF once and keeps, for each
+  variant that falls in an exon, only the haplotype copies that carry it; it groups the copies into haplotypes by
+  hashing, checks every group exactly, and computes each haplotype's protein with the reference's own steps, in
+  parallel workers, while it reads. The values the reference took from pandas, such as IDs that pandas retypes
+  depending on the size of the cohort (`2e5` becoming `200000.0`), are reproduced. On the benchmark block (60
+  simulated transcripts of chromosome 22, one thread), the filter and `prohap.py` together take 10.5 CPU-s at
+  26,000 samples, where 0.1.0 took 499 and the reference 2,644; at 500,000 samples they take 296 CPU-s, and
+  `prohap.py` peaks at 4.0 GB with four workers. TTN, the longest transcript, takes 22 CPU-s at 26,000 samples and
+  517 at 500,000. Genome-wide, that is about 26 CPU-hours for 500,000 samples on an Apple Silicon Mac.
+- **`vcf_filter_fix.py` is about 27 times faster.** It handles the genotypes as bytes with numpy instead of one
+  Python string per sample, and writes its output at gzip level 1; 2.8 CPU-s instead of 76.5 for the block at 26,000
+  samples.
+- **Input the fast code does not handle is handed to the reference code, never guessed at.** A step that meets it
+  (for example a carriage return or a non-ASCII byte in the VCF, unphased or multi-character genotypes reaching
+  `prohap.py`, a FORMAT other than `GT` there, or sample metadata on which the reference stops) runs the reference
+  script of the same name with the same arguments, which writes that step's outputs. Lines of the filter outside its
+  fast path go through the reference's code for that line. `verify` lists the steps that were handed over.
+
 ## [0.1.0] - 2026-11-19
 
 ### Added
@@ -89,5 +114,6 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   name ends in `.gz`: the table holds only the header line and the FASTA is empty. Names without `.gz` are written
   as before. As upstream, no cDNA FASTA is written for such a chromosome.
 
-[Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mphthomas/ProHap-fast/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mphthomas/ProHap-fast/compare/cafcc51...v0.1.0
