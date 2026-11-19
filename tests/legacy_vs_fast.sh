@@ -23,10 +23,13 @@
 #
 # Needs the ProHap environment (snakemake on PATH) and the pre-built references of Ensembl release 113 in
 # $PROHAP_REFS/ensembl.v113 (e.g. PROHAP_REFS=~/prohap-refs); no container. Exit status 0 when every output is
-# identical, 1 when one differs or a run fails; the work directory is then kept.
+# identical, 1 when one differs or a run fails; the work directory is then kept. A fast run in which a script handed
+# its input over to the reference code (src/modules/fallback.py) counts as failed: it would compare the reference
+# with itself.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+FALLBACK='ProHap-fast: falling back to the reference code'     # src/modules/fallback.py
 SMALL="1kg/threshold0 1kg/template sim/mix-threshold0 sim/mix-template"
 MEDIUM="sim/n2500 sim/n5000 sim/n10000 sim/whole22 dupseq"
 LARGE="sim/n26000 sim/n100000 sim/ttn"
@@ -37,7 +40,7 @@ while getopts j:kh opt; do
     case $opt in
         j) cores=$OPTARG ;;
         k) keep=1 ;;
-        *) sed -n '2,26p' "$0"; exit 2 ;;
+        *) sed -n '2,28p' "$0"; exit 2 ;;
     esac
 done
 shift $((OPTIND - 1))
@@ -157,6 +160,11 @@ for fixture in "${fixtures[@]}"; do
             continue 2
         fi
         printf '%-7s run: %4d s\n' "$arm" $((SECONDS - start))
+        if [ "$arm" = fast ] && grep -q "$FALLBACK" "$fdir/$arm.log"; then
+            echo "fast run FELL BACK to the reference code (log: $fdir/$arm.log):"
+            grep "$FALLBACK" "$fdir/$arm.log" | cut -c 1-300 | sed 's/^/    /'
+            failed=1
+        fi
     done
 
     legacy=$fdir/legacy
@@ -196,7 +204,7 @@ if [ $failed = 0 ] && [ $different = 0 ]; then
     if [ $keep = 0 ]; then rm -rf "$work"; else echo "Kept $work"; fi
     exit 0
 fi
-[ $failed = 0 ] || echo 'A run FAILED.'
+[ $failed = 0 ] || echo 'A run FAILED or fell back to the reference code.'
 [ $different = 0 ] || echo "DIFFERENT: $different of $total outputs."
 echo "Kept $work"
 exit 1
