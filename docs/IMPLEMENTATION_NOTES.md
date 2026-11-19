@@ -347,14 +347,33 @@ has 6,717 / 9,059 / 12,198 / 18,414 records at 2.5k / 5k / 10k / 26k samples (20
 
 Scale factor: genome = block × 315 (autosomal MANE exon bp 68.2 Mb / block 217 kb). chr1 is 10.8% of it.
 
-### Harness
+### Harness (`bench/bench.py`)
 
-- Harness: run each arm with `PYTHONHASHSEED=0`; sample summed RSS of the process tree every 0.25 s; CPU from
-  `RUSAGE_CHILDREN`; timestamp stdout lines to split legacy phases (sweep / haplotypes+freqs / proteins / write).
+```bash
+python3 bench/bench.py --samples 2500,5000,10000,26000 --arms legacy,fast [--threads 1]
+python3 bench/bench.py --data DIR --arms legacy,/path/to/other/src
+```
 
-Measured CPU-s per block, legacy filter+prohap: 63 (2.5k), 202 (5k), 609 (10k), 2,072 (26k). Fast: 4.6, 6.1, 8.5,
-13.5, then 23 (50k), 43 (100k), 97 (200k), 351 (500k). Fast prohap with 4 workers at 500k: 82 s wall (reader-bound).
-TTN alone at 500k: 546 CPU-s, 6.7 GB. 500k block output: 117k rows, 293 MB TSV text (83% `samples`), 79k FASTA records.
+For each dataset (`--data`, or the benchmark block at each `--samples`, simulated once into `bench/data/`),
+chromosome and arm (`legacy` = `legacy/src`, `fast` = `src/`, or a directory), it runs `vcf_filter_fix.py` and then
+`prohap.py` with the Snakefile's arguments (`-af 0` and thresholds 0 by default, so every variant and haplotype is
+kept), `PYTHONHASHSEED=0`, through `tools/run_fork.py` on macOS. Per step:
+
+- wall time; CPU time (user + system) from the rusage `os.wait4()` returns for the step's process, which includes the
+  Pool workers it waited for. `RUSAGE_CHILDREN` of the harness would also count the `ps` calls of the sampler.
+- peak RSS of the process tree, summed over the processes `ps` lists every 0.25 s (forked workers share pages, so it
+  overstates, but it is what a scheduler's memory limit sees), and the largest single-process RSS (`ru_maxrss`).
+- prohap.py's phases, from the time each of its progress lines appears on stdout (`PYTHONUNBUFFERED=1`): setup,
+  sweep (assigning variants to transcripts: the per-transcript tables), haplotypes (co-occurrence and frequencies),
+  cdna (reading the cDNA FASTA), proteins, write.
+
+It prints a table, appends to `bench/results.tsv` (git-ignored) and, when two arms ran, compares their outputs after
+decompression (a convenience; `tests/legacy_vs_fast.sh` is the identity check).
+
+Design-work measurements (prototypes, lost), CPU-s per block, legacy filter+prohap: 63 (2.5k), 202 (5k), 609 (10k),
+2,072 (26k). Fast: 4.6, 6.1, 8.5, 13.5, then 23 (50k), 43 (100k), 97 (200k), 351 (500k). Fast prohap with 4 workers at
+500k: 82 s wall (reader-bound). TTN alone at 500k: 546 CPU-s, 6.7 GB. 500k block output: 117k rows, 293 MB TSV text
+(83% `samples`), 79k FASTA records.
 
 ---
 

@@ -24,6 +24,7 @@ docs/
 peptide_annotation/
 sample_data/
 tests/
+bench/
 
 # Build artifacts and transfer archives
 *.sif

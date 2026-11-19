@@ -272,6 +272,8 @@ Pangenome Reference Consortium are on Zenodo:
   code and then with `src/` on the 1kG fixture ([tests/fixtures/1kg](tests/fixtures/1kg/README.md)), and compares
   every output, in about a minute and a half. It runs in the ProHap environment with pre-built references
   (`PROHAP_REFS`), without a container.
+- `bench/simulate.py` simulates a phased cohort of any size over a block of MANE transcripts, and `bench/bench.py`
+  times the filter and `prohap.py` of each implementation on it (CPU, memory, phases).
 - `pytest tests/` runs the unit tests in under a minute (pytest: `pip install --no-deps --require-hashes -r
   envs/test.pip.lock`). With pre-built references, `tests/test_identity.py` also runs `verify` on the fixture.
 - CI (GitHub Actions): `unit` runs pytest on every push and pull request.

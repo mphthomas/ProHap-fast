@@ -1,6 +1,6 @@
-"""bench/simulate.py on a tiny synthetic references directory.
+"""bench/simulate.py and bench/bench.py on a tiny synthetic references directory.
 
-Runs in the ProHap environment, without pre-built references (about 15 s):
+Runs in the ProHap environment, without pre-built references (about 25 s):
 
     pytest tests/test_bench.py
 """
@@ -19,6 +19,7 @@ pytest.importorskip('numpy')
 
 ROOT = Path(__file__).resolve().parent.parent
 SIMULATE = ROOT / 'bench' / 'simulate.py'
+BENCH = ROOT / 'bench' / 'bench.py'
 RELEASE = '113'
 PAR1_TO, PAR2_FROM = 2781479, 155701383
 COMPLEMENT = str.maketrans('ACGT', 'TGCA')
@@ -286,4 +287,20 @@ def test_reference_code_reads_the_data(refs, dataset, tmp_path, chrom):
     table = (tmp_path / 'run' / 'haplo.tsv').read_text().split('\n')
     assert len(table) > 10
     assert (tmp_path / 'run' / 'haplo.fa').read_text().count('>') > 5
+
+
+def test_bench_harness(refs, dataset, tmp_path):
+    tsv = tmp_path / 'results.tsv'
+    result = subprocess.run([sys.executable, str(BENCH), '--refs', str(refs), '--data', str(dataset), '--arms',
+                             'legacy,fast', '--tsv', str(tsv), '--work', str(tmp_path / 'work')],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'dataset chr22, legacy vs fast: outputs IDENTICAL' in result.stdout.replace(dataset.name, 'dataset')
+    rows = [line.split('\t') for line in tsv.read_text().split('\n')[1:-1]]
+    assert [(r[3], r[7], r[8]) for r in rows] == [(c, a, s) for c in ('22', 'X') for a in ('legacy', 'fast')
+                                                  for s in ('filter', 'prohap')]
+    prohap = [r for r in rows if r[8] == 'prohap']
+    assert all(float(r[11]) > 0 and float(r[13]) > 0 for r in prohap)
+    assert all([p.split('=')[0] for p in r[14].split(';')] == ['setup', 'sweep', 'haplotypes', 'cdna', 'proteins',
+                                                                'write'] for r in prohap)
 
