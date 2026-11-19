@@ -299,15 +299,58 @@ Measured on a 135k-row table: merge 40 → 9 s, extract 42 → 10 s; memory one 
 
 ## 5. Benchmark harness and simulator (`bench/`)
 
-- Simulator: block of consecutive MANE transcripts with a start codon; REF bases from the Ensembl cDNA mapped back
-  through the exons (reverse-complemented on `-` strand). Variant density `0.3 × (N/500000)**0.43` per exonic bp;
-  common sites at 1/300 bp with AF log-uniform 0.01–0.5 carried by 40 founder haplotypes per 50 kb (Dirichlet 0.5);
-  rare sites with allele count from a discrete power law (exponent 1.9) up to 1% of 2N; 6% deletions, 6% insertions,
-  6% second ALT; ID modes `.`, `rs…`, or 30% pandas-ambiguous (`2e5 123 7 1e3 NA 0012 nan True`); chrX males mirrored
-  or haploid in non-PAR; metadata with 26 1kG-style populations. gzip level 1.
+### Simulator (`bench/simulate.py`)
+
+```bash
+python3 bench/simulate.py --chrom 22 --first ENST00000402142 --transcripts 60 --samples 26000 --out DIR
+```
+
+writes `chr22.vcf.gz` (with `--chunks K`: `chr22.1.vcf.gz` ... `chr22.K.vcf.gz`, so the workflow glob is
+`chr{chr}.*vcf.gz`), `samples.tsv`, `transcripts.csv` and `chr22.json` (arguments and counts), reading the references
+directory (`--refs`, default the one `ensembl.v*` in `$PROHAP_REFS`). Several runs into one directory, one per
+chromosome, make one dataset: `samples.tsv` must come out the same, and `transcripts.csv` keeps the other
+chromosomes' rows. The model, as rebuilt from the design work:
+
+- Block: `--transcripts` consecutive MANE transcripts with a start codon, in order of start (the order prohap.py
+  sorts them in), from `--first` or after `--skip`; 0 means to the end of the chromosome. REF bases come from the
+  Ensembl cDNA mapped back through the exons, complemented on the − strand; a transcript whose cDNA is not its exons
+  spliced together gives no bases (none in the MANE blocks used here).
+- Sites per exonic bp `0.3 × (N/500000)**0.43`, drawn without replacement from the block's exonic bases. Common
+  sites, one per 300 exonic bp: AF log-uniform 0.01–0.5, carried by founders. Each 50 kb window has 40 founder
+  haplotypes with Dirichlet(0.5) weights, every haplotype copy descends from one founder per window, and a site is
+  carried by founders taken in random order until their weights reach its AF. Rare sites: allele count from a
+  discrete power law (exponent 1.9) up to 1% of 2N, on random copies.
+- 6% deletions and 6% insertions, 1–10 bp (geometric, p = 0.5); 6% with a second ALT (an SNV on other copies, with a
+  rare count). A deletion may run past the end of its exon; its intronic REF bases are random, since nothing reads
+  intronic bases.
+- Added in the rebuild: 10% of deletions get an SNV inside the deleted bases (or on the anchor base, as a second
+  record at the same POS) on half of the deletion's carriers plus 0–2 others, so prohap.py finds conflicting
+  variants and logs removed samples (about 360 copies on the benchmark block at 2.5k samples; without it a
+  conflict needs a rare and a common variant to overlap on one copy, and almost never happens). A common site whose
+  founders no copy descends from (only in tiny cohorts) gets rare carriers instead, so no record has AC 0.
+- IDs (`--ids`): `dot`; `rs` (unique random rs numbers); `ambiguous`: 30% tokens pandas may retype, of the kinds
+  `2e5 123 7 0012 NA nan True False 1.50`, the rest `.`. The rest is `.` rather than rs because `.` becomes a hex
+  line number, which pandas also often reads as a number, so 8-row chunks of only numeric-looking IDs occur at 100k
+  samples; with rs IDs nearly every chunk would contain a string and stay text.
+- chrX outside the PARs (`x_par1_to` 2,781,479, `x_par2_from` 155,701,383): males have one copy, written haploid
+  (`1`, `--males haploid`) or mirrored (`1|1`); AC and AN count what is written.
+- Samples `S000001`...: 26 1kG populations, sex 50/50. `--unlisted K` leaves K VCF samples out of `samples.tsv`
+  and adds K metadata rows (`M000001`...) not in the VCF.
+- FORMAT `GT` only; INFO `AC=..;AN=..;AF=..` with AF `%.6g`; QUAL `.`, FILTER `PASS`. gzip level 1 with mtime 0, so
+  the same arguments write the same bytes. Random streams: the samples from `(seed)`, sites and genotypes from
+  `(seed, chromosome)`, IDs from a third stream, so `--ids`, `--males` and `--chunks` change only what they name.
+
+The benchmark block is 60 transcripts of chromosome 22 from ENST00000402142 (39.57–41.9 Mb), 217,387 exonic bp.
+The design work recorded only "60 consecutive MANE transcripts on chr22, 217 kb"; this block has that size. It
+has 6,717 / 9,059 / 12,198 / 18,414 records at 2.5k / 5k / 10k / 26k samples (20 MB gzipped at 26k), simulated in
+1–3 s.
+
+Scale factor: genome = block × 315 (autosomal MANE exon bp 68.2 Mb / block 217 kb). chr1 is 10.8% of it.
+
+### Harness
+
 - Harness: run each arm with `PYTHONHASHSEED=0`; sample summed RSS of the process tree every 0.25 s; CPU from
   `RUSAGE_CHILDREN`; timestamp stdout lines to split legacy phases (sweep / haplotypes+freqs / proteins / write).
-- Scale factor: genome = block × 315 (autosomal MANE exon bp 68.2 Mb / block 217 kb). chr1 is 10.8% of it.
 
 Measured CPU-s per block, legacy filter+prohap: 63 (2.5k), 202 (5k), 609 (10k), 2,072 (26k). Fast: 4.6, 6.1, 8.5,
 13.5, then 23 (50k), 43 (100k), 97 (200k), 351 (500k). Fast prohap with 4 workers at 500k: 82 s wall (reader-bound).
