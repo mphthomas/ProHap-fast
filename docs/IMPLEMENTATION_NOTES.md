@@ -127,7 +127,10 @@ and replace `row = vcf_df.iloc[idx]` + `row['X']` with `col_X[idx]`. Exact becau
 **P2, same file.** After `sample_info.set_index(...)`: `sex_of`, `pop_of`, `superpop_of` from `.to_dict()`;
 `male_samples` from `sex_of`; `male_set = set(male_samples)` and use it for `indiv not in male_set`; in
 `count_freq_pop`/`count_freq_superpop` use `pop_of[...]`/`superpop_of[...]`; make `x_autosomal_transcripts` a set
-before the `apply` calls. Keep `len(male_samples)` from the list.
+before the `apply` calls. Keep `len(male_samples)` from the list (a sample the VCF lists twice counts twice).
+A sample name listed twice in the metadata makes `.loc` return a frame, and the reference stops on the
+`male_samples` line (ambiguous truth value); the rebuild keeps that lookup when the index is not unique, so
+`src/` stops there too.
 
 **P3, `modules/process_haplotypes.py`.**
 `haplo_groups = {tid: g for tid, g in genes_haplo_df.groupby('TranscriptID', sort=False)}` before the closure; in it
@@ -157,6 +160,7 @@ benchmark block (§5) with one thread. CPU seconds of `prohap.py`, the peak RSS 
 | --- | ---: | ---: | ---: | --- |
 | legacy (§5) | 530.6 | 2,567.2 | 12.3 GB | 243.3 / 2,302.5 / 41.1 |
 | P1 | 124.4 | 509.6 | 12.3 GB | 250.0 / 213.1 / 42.5 |
+| P1–P2 | 99.5 | 446.0 | 12.3 GB | 251.7 / 147.5 / 43.1 |
 
 ---
 

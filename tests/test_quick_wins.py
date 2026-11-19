@@ -142,10 +142,10 @@ def haplotype_inputs(tmp_path):
     return transcripts, indiv_ids, metadata
 
 
-def run_get_gene_haplotypes(arm, tmp_path, monkeypatch, is_x, metadata_edit=None):
+def run_get_gene_haplotypes(arm, tmp_path, monkeypatch, is_x, edit=None):
     transcripts, indiv_ids, metadata = haplotype_inputs(tmp_path)
-    if metadata_edit:
-        metadata = metadata_edit(metadata)
+    if edit:
+        indiv_ids, metadata = edit(indiv_ids, metadata)
     log = tmp_path / (arm + '.log')
     with modules_of(arm) as module:
         get_haplotypes = module('get_haplotypes')
@@ -165,3 +165,26 @@ def test_get_gene_haplotypes_matches_legacy(tmp_path, monkeypatch, is_x):
     ids = {i for line in legacy_table.splitlines()[1:] for i in line.split('\t')[3].split(';')}
     assert {'2e5', '0012', 'nan', 'True', '12', '1000.0', '7.0'} <= ids
     assert any(line.split('\t')[1] != '0' for line in legacy_log.splitlines()[1:])
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# P2: get_haplotypes.py looks up sex and populations in dicts instead of sample_info.loc per sample
+
+
+@pytest.mark.parametrize('is_x', [False, True], ids=['autosome', 'chrX'])
+def test_vcf_sample_listed_twice(tmp_path, monkeypatch, is_x):
+    """prohap.py takes the sample names from the VCF header as they are, so a name listed twice is counted twice (and
+    pandas reads the first of its columns both times)."""
+    def edit(indiv_ids, metadata):
+        return indiv_ids + [indiv_ids[0]], metadata
+    legacy = run_get_gene_haplotypes('legacy', tmp_path, monkeypatch, is_x, edit)
+    assert run_get_gene_haplotypes('fast', tmp_path, monkeypatch, is_x, edit) == legacy
+
+
+def test_metadata_name_listed_twice(tmp_path, monkeypatch):
+    """The reference stops when a sample of the VCF has two metadata rows; so must src/."""
+    def edit(indiv_ids, metadata):
+        return indiv_ids, pd.concat([metadata, metadata.iloc[[2]]], ignore_index=True)
+    for arm in ('legacy', 'fast'):
+        with pytest.raises(ValueError, match='truth value of a Series is ambiguous'):
+            run_get_gene_haplotypes(arm, tmp_path, monkeypatch, True, edit)

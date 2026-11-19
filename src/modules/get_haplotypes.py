@@ -80,7 +80,16 @@ def get_gene_haplotypes(all_transcripts, indiv_ids, tmp_dir, log_file, threads, 
 
     sample_info.set_index('Sample name', inplace=True)
 
-    male_samples = [ sampleID for sampleID in indiv_ids if (sample_info.loc[sampleID]['Sex'] == 'male') ]
+    # dicts instead of sample_info.loc per sample. A sample name listed twice in the metadata makes .loc return a frame,
+    # and the reference stops on the male_samples line (ambiguous truth value): keep its lookup so that it still does
+    if not sample_info.index.is_unique:
+        male_samples = [ sampleID for sampleID in indiv_ids if (sample_info.loc[sampleID]['Sex'] == 'male') ]
+    sex_of = sample_info['Sex'].to_dict()
+    pop_of = sample_info['Population code'].to_dict()
+    superpop_of = sample_info['Superpopulation code'].to_dict()
+
+    male_samples = [ sampleID for sampleID in indiv_ids if (sex_of[sampleID] == 'male') ]  # a list: len() counts a sample the VCF lists twice
+    male_set = set(male_samples)
 
     global get_haplotypes
     # check haplotypes for every transcript in the DB -> return the ID, payload of the dataframe, and list of samples removed because of conflicting mutations
@@ -115,7 +124,7 @@ def get_gene_haplotypes(all_transcripts, indiv_ids, tmp_dir, log_file, threads, 
 
             hap1 = ','.join([ str(i) for i,elem in enumerate(vals) if elem.startswith('1|') ])
             hap2 = None
-            if (is_autosomal or (indiv not in male_samples)):                                       # males have alleles for the X chromosome specified on the first copy, second copy is always 0
+            if (is_autosomal or (indiv not in male_set)):                                       # males have alleles for the X chromosome specified on the first copy, second copy is always 0
                 hap2 = ','.join([ str(i) for i,elem in enumerate(vals) if elem.endswith('|1') ])
 
             # no alternative alleles -> reference haplotype
@@ -217,6 +226,8 @@ def get_gene_haplotypes(all_transcripts, indiv_ids, tmp_dir, log_file, threads, 
             if (is_X_chrom and elem['autosomal']):
                 x_autosomal_transcripts.append(elem['id'])
 
+    x_autosomal_transcripts = set(x_autosomal_transcripts)     # membership tests per row below
+
     result_df = pd.DataFrame(columns=result_columns, data=result_data)
 
     # count frequencies taking into account the number of removed samples in the transcript, and sex in case of X chromosome
@@ -244,7 +255,7 @@ def get_gene_haplotypes(all_transcripts, indiv_ids, tmp_dir, log_file, threads, 
             return '-'
 
         for s in row['Samples'].split(';'):
-            pop_code = sample_info.loc[s.split(':',1)[0]]['Population code']
+            pop_code = pop_of[s.split(':',1)[0]]
 
             if (pop_code in populations):
                 populations[pop_code] += 1
@@ -283,7 +294,7 @@ def get_gene_haplotypes(all_transcripts, indiv_ids, tmp_dir, log_file, threads, 
             return '-'
         
         for s in row['Samples'].split(';'):
-            superpop_code = sample_info.loc[s.split(':',1)[0]]['Superpopulation code']
+            superpop_code = superpop_of[s.split(':',1)[0]]
 
             if (superpop_code in superpop):
                 superpop[superpop_code] += 1
