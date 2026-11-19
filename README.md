@@ -269,8 +269,11 @@ Pangenome Reference Consortium are on Zenodo:
 - `src/` is the fast implementation, `legacy/src` the frozen reference ([never edited](legacy/README.md)); the
   config's `implementation` picks one, and every rule, path and reference is shared.
 - `tests/legacy_vs_fast.sh` is the check every change to `src/` must pass. It runs the workflow with the reference
-  code and then with `src/` on the 1kG fixture ([tests/fixtures/1kg](tests/fixtures/1kg/README.md)), and compares
-  every output, in about a minute and a half. It runs in the ProHap environment with pre-built references
+  code and then with `src/` on test data and compares every output: by default the 1kG fixture
+  ([tests/fixtures/1kg](tests/fixtures/1kg/README.md)) and a small simulated one, in about three minutes;
+  `tests/legacy_vs_fast.sh medium` and `large` add larger simulated cohorts, chromosome X with haploid or mirrored
+  males, a table of more than 32,768 rows, 400,000 proteins for `merge_duplicate_seq.py`, and TTN
+  ([tests/fixtures/sim](tests/fixtures/sim/README.md)). It runs in the ProHap environment with pre-built references
   (`PROHAP_REFS`), without a container.
 - `bench/simulate.py` simulates a phased cohort of any size over a block of MANE transcripts, and `bench/bench.py`
   times the filter and `prohap.py` of each implementation on it (CPU, memory, phases).

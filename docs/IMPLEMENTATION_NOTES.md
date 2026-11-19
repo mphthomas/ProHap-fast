@@ -82,10 +82,15 @@ carries the time it was written; decompressed it is identical too.
 ## Checking `src/` against `legacy/src`
 
 `tests/legacy_vs_fast.sh` is the check every change to `src/` must pass. It runs on the host, in the ProHap
-environment, with no container. For each 1kG fixture config it runs the workflow twice on the same inputs, once
+environment, with no container. For each fixture config it runs the workflow twice on the same inputs, once
 with `--config implementation=legacy` and once with `--config implementation=fast`, each in its own work directory
 (switching `implementation` in place reruns nothing). Then it compares every file under the two directories, except
 `.snakemake/`, after decompression. A file that is gzip in one run and plain in the other is DIFFERENT.
+
+The fixtures come in tiers. `small` (the default) is the two 1kG configs below and two configs of a small simulated
+dataset; `medium` and `large` are simulated cohorts of 2,500 to 100,000 samples, a whole chromosome, TTN and
+400,000 proteins for `merge_duplicate_seq.py` (`tests/fixtures/sim/README.md`, data from section 5's simulator,
+generated on first use into a git-ignored cache). The tiers' run times are in the script's header.
 
 The fixture keeps only 109 transcripts (`tests/fixtures/1kg/make_transcripts.py`), because the reference costs
 about 0.1 s of CPU per transcript at 2,548 samples whether the transcript has variants or not. For every transcript,

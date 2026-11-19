@@ -24,13 +24,15 @@ Two configs:
 
 ```bash
 conda activate prohap-fast            # or any environment with the ProHap packages and snakemake
-PROHAP_REFS=~/prohap-refs tests/legacy_vs_fast.sh
+PROHAP_REFS=~/prohap-refs tests/legacy_vs_fast.sh 1kg/threshold0 1kg/template
 ```
 
 For each config, the script runs the workflow with the reference code, then with ProHap-fast, on the same inputs,
 and compares every output file after decompression. It prints each file as IDENTICAL or DIFFERENT (with the first
 differing lines) and exits with status 0 only when everything is identical. About a minute and a half on 8 cores:
 roughly 20 s per run, most of it the steps every run has (cleaning the reference proteome, merging with it).
+Without arguments, the script runs these two configs and the small simulated fixture
+([../sim/README.md](../sim/README.md)).
 
 `tests/test_identity.py` (pytest) runs `verify`, the user-facing version of the same check, on these configs, plus
 a sample and transcript subset and a negative test (a copy of `src/` that changes one character must be reported

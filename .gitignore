@@ -15,5 +15,6 @@ __pycache__/
 log/
 testrun/*
 verify_runs/
+tests/fixtures/sim/cache/
 bench/data/
 bench/results.tsv

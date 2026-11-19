@@ -3,8 +3,8 @@ when the fast arm's code changes one character of an output.
 
     PROHAP_REFS=~/prohap-refs pytest tests/test_identity.py
 
-About 3 minutes in all on 4 cores. tests/legacy_vs_fast.sh is the quicker check of src/ against legacy/src on the
-same fixtures; this module tests verify, the user-facing check.
+About 3 minutes in all on 4 cores. tests/legacy_vs_fast.sh is the check of src/ against legacy/src, on these
+fixtures and simulated ones; this module tests verify, the user-facing check.
 Needs the ProHap environment and the pre-built references of release 113 ($PROHAP_REFS/ensembl.v113, else
 /opt/prohap/refs/ensembl.v113); skipped without them. VERIFY_CORES sets the cores for each run (default 4).
 

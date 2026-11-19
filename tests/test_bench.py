@@ -1,6 +1,7 @@
-"""bench/simulate.py and bench/bench.py on a tiny synthetic references directory.
+"""bench/simulate.py, bench/simulate_fasta.py and bench/bench.py on a tiny synthetic references directory, and the
+consistency of the simulated fixtures (tests/fixtures/sim) with tests/legacy_vs_fast.sh.
 
-Runs in the ProHap environment, without pre-built references (about 25 s):
+Runs in the ProHap environment, without pre-built references (about 30 s):
 
     pytest tests/test_bench.py
 """
@@ -19,7 +20,9 @@ pytest.importorskip('numpy')
 
 ROOT = Path(__file__).resolve().parent.parent
 SIMULATE = ROOT / 'bench' / 'simulate.py'
+SIMULATE_FASTA = ROOT / 'bench' / 'simulate_fasta.py'
 BENCH = ROOT / 'bench' / 'bench.py'
+SIM = ROOT / 'tests' / 'fixtures' / 'sim'
 RELEASE = '113'
 PAR1_TO, PAR2_FROM = 2781479, 155701383
 COMPLEMENT = str.maketrans('ACGT', 'TGCA')
@@ -54,7 +57,7 @@ def build_transcript(rng, strand, exons, utr5, codons):
 
 @pytest.fixture(scope='module')
 def refs(tmp_path_factory):
-    """A references directory with the files simulate.py and prohap.py read."""
+    """A references directory with the files simulate.py, simulate_fasta.py and prohap.py read."""
     import gffutils
     rng = random.Random(1)
     out = tmp_path_factory.mktemp('refs') / ('ensembl.v' + RELEASE)
@@ -62,6 +65,7 @@ def refs(tmp_path_factory):
     (out / 'release.txt').write_text(RELEASE + '\n')
     gtf = {}
     cdna_fa = []
+    pep_fa = []
     for chrom, tid, strand, exons, utr5, codons, has_start in TRANSCRIPTS:
         cdna, start = build_transcript(rng, strand, exons, utr5, codons)
         gid = tid.replace('ENST', 'ENSG')
@@ -74,6 +78,8 @@ def refs(tmp_path_factory):
             lines.append('\t'.join([chrom, 'test', 'start_codon', str(start[0]), str(start[1]), '.', strand, '0',
                                     attrs]))
         cdna_fa.append('>%s.1 cdna chromosome:GRCh38:%s:%d:%d:1\n%s\n' % (tid, chrom, exons[0][0], exons[-1][1], cdna))
+        pep_fa.append('>generic_ensref|%s|pep chromosome:GRCh38:%s:%d:%d:1 matching_proteins:%s\n%s\n'
+                      % (tid, chrom, exons[0][0], exons[-1][1], tid, 'M' + 'ACDEFGHIKL' * 20))
     for chrom, lines in gtf.items():
         path = out / ('chr%s.gtf' % chrom)
         path.write_text('\n'.join(lines) + '\n')
@@ -82,8 +88,11 @@ def refs(tmp_path_factory):
                            force=True, keep_order=True, merge_strategy='merge', sort_attribute_values=True,
                            disable_infer_genes=True, disable_infer_transcripts=True)
     (out / ('total_cdnas_%s.fa' % RELEASE)).write_text(''.join(cdna_fa))
+    (out / ('ensembl_reference_proteinDB_%s_tagged.fa' % RELEASE)).write_text(''.join(pep_fa))
     (out / ('transcripts_reference_%s.csv' % RELEASE)).write_text(
         'chromosome,transcriptID\n' + ''.join('%s,%s\n' % (t[0], t[1]) for t in TRANSCRIPTS) + '7,ENST00000000099\n')
+    with gzip.open(out / 'crap_tagged.fa.gz', 'wt') as fh:
+        fh.write('>generic_sp|ALBU_BOVIN| matching_proteins:ALBU_BOVIN\nMKWVTFISLLLLFSSAYSRGVFRR\n')
     return out
 
 
@@ -304,3 +313,41 @@ def test_bench_harness(refs, dataset, tmp_path):
     assert all([p.split('=')[0] for p in r[14].split(';')] == ['setup', 'sweep', 'haplotypes', 'cdna', 'proteins',
                                                                 'write'] for r in prohap)
 
+
+def test_simulate_fasta(refs, tmp_path):
+    def run(out):
+        subprocess.run([sys.executable, str(SIMULATE_FASTA), '--refs', str(refs), '--records', '300', '--out',
+                        str(out)], check=True, capture_output=True)
+        return gzip.open(out, 'rt').read()
+    text = run(tmp_path / 'a.fa.gz')
+    assert text == run(tmp_path / 'b.fa.gz')
+    headers = [line for line in text.split('\n') if line.startswith('>')]
+    assert len(headers) == 300
+    assert headers[0].startswith('>generic_ensref|ENST00000000001|position_within_protein:0 pep ')
+    assert headers[6] == '>generic_sp|ALBU_BOVIN| matching_proteins:ALBU_BOVIN'
+    assert all(re.fullmatch(r'>generic_enshap\|enshap_(22|X)_[0-9a-f]+(_3UTR_1)?\|position_within_protein:[0-9]+ '
+                            r'matching_proteins:[^ ]+ start:0 reading_frame:0(;0)*', h) for h in headers[7:])
+    sequences = text.split('\n')[1::2]
+    assert len(set(sequences)) < len(sequences)     # duplicates for merge_duplicate_seq.py
+
+
+def test_fixture_definitions():
+    """Every simulated config names a dataset of make_data.py with the same chromosomes, and every tier of
+    legacy_vs_fast.sh names an existing fixture."""
+    sys.path.insert(0, str(SIM))
+    import make_data
+    configs = sorted(SIM.glob('*.yaml'))
+    assert configs
+    for config in configs:
+        dataset = make_data.DATASETS[config.stem.split('-')[0]]
+        chroms = re.search(r'^chromosomes: \[(.*)\]$', config.read_text(), re.M).group(1)
+        assert sorted(c.strip(' "') for c in chroms.split(',')) == \
+            sorted(args[args.index('--chrom') + 1] for args in dataset['chromosomes']), config.name
+    script = (ROOT / 'tests' / 'legacy_vs_fast.sh').read_text()
+    named = set()
+    for tier in ('SMALL', 'MEDIUM', 'LARGE'):
+        named.update(re.search(r'^%s="(.*)"$' % tier, script, re.M).group(1).split())
+    for fixture in named:
+        assert fixture == 'dupseq' or (ROOT / 'tests' / 'fixtures' / (fixture + '.yaml')).is_file(), fixture
+    assert {'sim/' + c.stem for c in configs} | {'1kg/threshold0', '1kg/template', 'dupseq'} == named
+    assert set(make_data.DATASETS) == {c.stem.split('-')[0] for c in configs} | {'dupseq'}
