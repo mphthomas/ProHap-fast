@@ -75,6 +75,10 @@ def add_population_freqs(left, right):
 
 def process_haplotypes(all_transcripts, genes_haplo_df, all_cdnas, annotations_db, chromosome, id_prefix, force_rf, threads, min_freq = -1, min_count = 0, ignore_UTR = True, skip_start_loss = True, output_cdnas = False):
     result_data = []
+
+    # the rows of each transcript, grouped once: a boolean filter over the whole table per transcript was quadratic.
+    # Groups keep the table's row order and index (the index names the haplotype)
+    haplo_groups = { tid: group for tid, group in genes_haplo_df.groupby('TranscriptID', sort=False) }
     
     global process_transcript_haplotypes
     def process_transcript_haplotypes(transcript_feature):
@@ -104,7 +108,7 @@ def process_haplotypes(all_transcripts, genes_haplo_df, all_cdnas, annotations_d
             stop_codon = stop_codons[0]
 
         current_transcript = { 'ID': transcript_id, 'feature': transcript_feature, 'exons': exons, 'start_codon': start_codon, 'stop_codon': stop_codon, 'fasta_element': all_cdnas[transcript_id.split('.')[0]], 'biotype': biotype }
-        transcript_haplotypes = genes_haplo_df[genes_haplo_df['TranscriptID'] == transcript_id]
+        transcript_haplotypes = haplo_groups.get(transcript_id, genes_haplo_df.iloc[0:0])
 
         local_result_data = {}
         local_result_protein_sequences = []      # way to avoid duplicate sequences -> access sequences by hash, aggregate haplotype IDs that correspond
@@ -550,9 +554,9 @@ def process_haplotypes(all_transcripts, genes_haplo_df, all_cdnas, annotations_d
 
         for result_point in aggregated_results:
             if (len(result_point) == 3):
-                result_data = result_data + list(result_point[0])
-                result_protein_sequences = result_protein_sequences + result_point[1]
-                result_cdna_sequences = result_cdna_sequences + result_point[2]
+                result_data.extend(result_point[0])
+                result_protein_sequences.extend(result_point[1])
+                result_cdna_sequences.extend(result_point[2])
 
         result_df = pd.DataFrame(columns=result_columns, data=result_data)
         
