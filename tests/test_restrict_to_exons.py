@@ -195,7 +195,8 @@ REFS = Path(os.environ.get('PROHAP_REFS') or '/opt/prohap/refs').expanduser()
 @pytest.mark.skipif(shutil.which('snakemake') is None, reason='needs snakemake')
 def test_workflow_same_outputs_with_ids_set(tmp_path):
     """1kG chromosomes 1 (two chunks), 21 and 22 with every ID set: the fast arm writes the same outputs with
-    restrict_to_exons as without, and the legacy arm with it the same as the fast arm with it."""
+    restrict_to_exons as without, and the legacy arm with it the same as the fast arm with it (the legacy arm also
+    writes the filtered VCF, which has fewer records than without the option)."""
     data = tmp_path / 'input'
     data.mkdir()
     names = ['sample_chr1_1kGP_GRCh38_phased.vcf', 'sample_chr1_1kGP_GRCh38_phased_2.vcf',
@@ -216,7 +217,8 @@ def test_workflow_same_outputs_with_ids_set(tmp_path):
     fixture = fixture.replace('sample_chr{chr}_1kGP_GRCh38_phased*.vcf"', 'sample_chr{chr}_1kGP_GRCh38_phased*.vcf.gz"')
     assert 'phased*.vcf.gz"' in fixture and '"1", "21", "22"]' in fixture
     runs = {}
-    for name, arm, restrict in (('plain', 'fast', False), ('fast', 'fast', True), ('legacy', 'legacy', True)):
+    for name, arm, restrict in (('plain', 'fast', False), ('fast', 'fast', True), ('legacy', 'legacy', True),
+                                ('legacy_plain', 'legacy', False)):
         d = tmp_path / name
         d.mkdir()
         (d / 'config.yaml').write_text(fixture + '\nrestrict_to_exons: %s\n' % restrict)
@@ -242,16 +244,16 @@ def test_workflow_same_outputs_with_ids_set(tmp_path):
                 files[rel] = gzip.decompress(raw) if raw[:2] == b'\x1f\x8b' else raw
         return files
 
-    plain = outputs(runs['plain'], ['_phased_filtered.vcf.gz'])
-    fast = outputs(runs['fast'], ['_phased_filtered.vcf.gz', '_exons.vcf.gz'])
+    plain = outputs(runs['plain'], [])
+    fast = outputs(runs['fast'], ['_exons.vcf.gz'])
     assert sorted(plain) == sorted(fast)
     assert [f for f in plain if plain[f] != fast[f]] == []
     assert len(plain['results/1kg_haplotypes.tsv'].splitlines()) > 100
-    # fewer records in the restricted filtered VCF, and the arms agree on everything
+    # fewer records in the restricted filtered VCF (legacy writes it), and the arms agree on everything else
     for c in ('1', '21', '22'):
         name = 'data/vcf/phased/chr%s_phased_filtered.vcf.gz' % c
-        assert len(read(runs['fast'] / name)) < len(read(runs['plain'] / name))
-    legacy = outputs(runs['legacy'], [])
+        assert len(read(runs['legacy'] / name)) < len(read(runs['legacy_plain'] / name))
+    legacy = outputs(runs['legacy'], ['_phased_filtered.vcf.gz'])
     fast_all = outputs(runs['fast'], [])
     assert sorted(legacy) == sorted(fast_all)
     assert [f for f in legacy if legacy[f] != fast_all[f]] == []

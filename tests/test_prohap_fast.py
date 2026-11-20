@@ -65,18 +65,19 @@ def write_case(path, seed=1, vcf_edit=None, metadata_edit=None, list_edit=None, 
     return vcf
 
 
-def run(arm, case, vcf, extra=(), threads=2, chromosome='22'):
-    out = case / arm
+def run(arm, case, vcf, extra=(), threads=2, chromosome='22', vcf_args=None, name=None, env=None):
+    out = case / (name or arm)
     out.mkdir()
     (out / 'tmp').mkdir()
-    command = [sys.executable, str(ROOT / 'tools' / 'run_fork.py'), str(TREES[arm] / 'prohap.py'), '-i', str(vcf),
+    command = [sys.executable, str(ROOT / 'tools' / 'run_fork.py'), str(TREES[arm] / 'prohap.py')] + \
+        (vcf_args or ['-i', str(vcf)]) + [
                '-db', str(case / 'in.db'), '-transcripts', str(case / 'transcripts.csv'), '-cdna',
                str(case / 'cdna.fa'), '-s', str(case / 'samples.tsv'), '-chr', chromosome, '-min_hap_freq', '-1',
                '-min_hap_count', '0', '-acc_prefix', 'enshap_22', '-id_prefix', 'haplo_chr22', '-threads',
                str(threads), '-log', 'prohap.log', '-tmp_dir', 'tmp', '-output_csv', 'haplo.tsv.gz', '-output_fasta',
                'haplo.fa', '-output_cdna_fasta', 'cdna.fa'] + list(extra)
     proc = subprocess.run(command, cwd=out, capture_output=True, text=True,
-                          env=dict(os.environ, PYTHONHASHSEED='0', PYTHONNOUSERSITE='1'))
+                          env=dict(os.environ, PYTHONHASHSEED='0', PYTHONNOUSERSITE='1', **(env or {})))
     files = {}
     for name in OUTPUTS:
         if (out / name).exists():
@@ -194,3 +195,94 @@ def test_case(results, name):
         assert set(fast_files) == {'haplo.tsv.gz', 'haplo.fa'}
     elif not name.startswith('min_hap'):
         assert fast_files['haplo.tsv.gz'].count(b'\n') > 10 and fast_files['prohap.log'].count(b'\n') > 3
+
+
+# ------------------------------------ the fused filter (F3) ------------------------------------
+# prohap.py -filter_glob against the reference's two steps: legacy vcf_filter_fix.py into a file, then legacy
+# prohap.py on it. The cases are those above; the filter normalises what it can (GT:DS becomes GT), so whether the
+# fast run falls back is the fused run's own: FUSED_FALLS_BACK lists the cases that do.
+
+FUSED_CASES = ['threads1', 'threads3_plain_vcf', 'min_hap_count', 'empty_vcf', 'unphased', 'extra_format_field',
+               'carriage_return', 'non_ascii', 'af_threshold', 'duplicate_transcript', 'no_transcript_for_the_records']
+FUSED_FALLS_BACK = {'unphased', 'carriage_return', 'non_ascii', 'af_threshold', 'duplicate_transcript',
+                    'no_transcript_for_the_records'}
+
+
+def run_fused_both(case, vcf, extra=(), threads=2, chromosome='22', filter_af='0'):
+    filtered = case / 'filtered.vcf.gz'
+    proc = subprocess.run([sys.executable, str(TREES['legacy'] / 'vcf_filter_fix.py'), '-i', str(vcf), '-chr',
+                           chromosome, '-af', filter_af, '-o', str(filtered)], capture_output=True, text=True,
+                          env=dict(os.environ, PYTHONHASHSEED='0'))
+    assert proc.returncode == 0, proc.stderr
+    legacy = run('legacy', case, filtered, extra, threads, chromosome)
+    fused = run('fast', case, None, extra, threads, chromosome, name='fused',
+                vcf_args=['-filter_glob', str(vcf), '-filter_af', filter_af, '-filter_af_field', 'AF'])
+    return legacy, fused
+
+
+@pytest.fixture(scope='module')
+def fused_results(tmp_path_factory):
+    root = tmp_path_factory.mktemp('fused')
+
+    def one(name):
+        case = root / name
+        case.mkdir()
+        write_args, run_args, _, _ = CASES[name]
+        return name, run_fused_both(case, write_case(case, **write_args), **run_args)
+    with concurrent.futures.ThreadPoolExecutor(8) as pool:
+        return dict(pool.map(one, FUSED_CASES))
+
+
+@pytest.mark.parametrize('name', FUSED_CASES)
+def test_fused(fused_results, name):
+    stops = CASES[name][3]
+    (legacy, legacy_files), (fused, fused_files) = fused_results[name]
+    assert (FALLBACK in fused.stderr) == (name in FUSED_FALLS_BACK), fused.stderr
+    if stops:
+        assert legacy.returncode != 0 and fused.returncode != 0, (legacy.stderr, fused.stderr)
+        return
+    assert legacy.returncode == 0, legacy.stderr
+    assert fused.returncode == 0, fused.stderr
+    assert fused_files == legacy_files
+    if name == 'empty_vcf':
+        assert set(fused_files) == {'haplo.tsv.gz', 'haplo.fa'}
+    elif not name.startswith('min_hap'):
+        assert fused_files['haplo.tsv.gz'].count(b'\n') > 10
+
+
+def test_fused_af_threshold(tmp_path):
+    """-filter_af above 0: the filter drops records by AF; the fused run reads the same lines."""
+    case = tmp_path / 'case'
+    case.mkdir()
+    vcf = write_case(case, seed=3)
+    (legacy, legacy_files), (fused, fused_files) = run_fused_both(case, vcf, extra=NO_UTR, filter_af='0.05')
+    assert legacy.returncode == 0 and fused.returncode == 0, (legacy.stderr, fused.stderr)
+    assert FALLBACK not in fused.stderr
+    assert fused_files == legacy_files
+
+
+def test_fused_fallback_leaves_no_filtered_file(tmp_path):
+    case = tmp_path / 'case'
+    case.mkdir()
+    vcf = write_case(case, seed=2, vcf_edit=lambda t: t.replace('\n', '\r\n'))
+    (legacy, legacy_files), (fused, fused_files) = run_fused_both(case, vcf, extra=NO_UTR)
+    assert FALLBACK in fused.stderr and fused.returncode == 0
+    assert fused_files == legacy_files
+    assert list((case / 'fused' / 'tmp').iterdir()) == []
+
+
+def test_fused_fallback_error_mode(tmp_path):
+    case = tmp_path / 'case'
+    case.mkdir()
+    vcf = write_case(case, seed=2, vcf_edit=lambda t: t.replace('\n', '\r\n'))
+    fused, _ = run('fast', case, None, NO_UTR, name='fused', env={'PROHAP_FALLBACK': 'error'},
+                   vcf_args=['-filter_glob', str(vcf), '-filter_af', '0', '-filter_af_field', 'AF'])
+    assert fused.returncode == 3 and 'PROHAP_FALLBACK=error' in fused.stderr
+
+
+def test_i_or_filter_glob():
+    proc = subprocess.run([sys.executable, str(TREES['fast'] / 'prohap.py'), '-db', 'x', '-transcripts', 'x', '-cdna',
+                           'x', '-s', 'x', '-chr', '22', '-output_csv', 'x', '-output_fasta', 'x'],
+                          capture_output=True, text=True)
+    assert proc.returncode == 2 and 'either -i or -filter_glob' in proc.stderr
+

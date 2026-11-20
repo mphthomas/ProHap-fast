@@ -178,3 +178,44 @@ def test_both_stop_on_what_stops_the_reference(tmp_path):
     results = run_both(tmp_path, tmp_path / 'in.vcf')
     assert results['legacy'][0] != 0 and results['fast'][0] != 0
     assert "'GT' is not in list" in results['legacy'][3] and "'GT' is not in list" in results['fast'][3]
+
+
+# ------------------------------------ -o - (F3: prohap.py -filter_glob reads it through a pipe) ------------------------
+
+def run_stdout(pattern, af='0', env=None):
+    return subprocess.run([sys.executable, str(TREES['fast'] / 'vcf_filter_fix.py'), '-i', str(pattern), '-chr', '22',
+                           '-af', af, '-o', '-'], capture_output=True,
+                          env=dict(os.environ, PYTHONHASHSEED='0', **(env or {})))
+
+
+def test_stdout_is_the_file_uncompressed(tmp_path):
+    rng = random.Random(8)
+    def records(start):
+        out = []
+        for i in range(30):
+            alt, af = rng.choice([('T', 'AF=0.2'), ('T', 'AF=0.01'), ('G,T', 'AF=0.2,0.01')])
+            out.append((start + i, '.', 'C', alt, af, 'GT',
+                        random_genotypes(rng, 10, ('0|0', '0|1', '2|1', '1', '.|0'))))
+        return out
+    write(tmp_path / 'c.1.vcf.gz', vcf(SAMPLES, records(100)))
+    write(tmp_path / 'c.2.vcf', vcf(SAMPLES, records(300), header=HEADER + ['##second=1']).rstrip('\n'))
+    write(tmp_path / 'c.3.vcf.gz', '')
+    results = run_both(tmp_path, tmp_path / 'c.*', '0.05')
+    expected = check(results)
+    proc = run_stdout(tmp_path / 'c.*', '0.05')
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.decode() == expected
+    # the messages go to stderr, nothing else does
+    assert proc.stderr.decode().splitlines() == results['fast'][1].splitlines()
+    assert not (tmp_path / '-').exists()
+
+
+@pytest.mark.parametrize('fallback', [None, 'error'])
+def test_stdout_stops_instead_of_falling_back(tmp_path, fallback):
+    rng = random.Random(9)
+    records = [(100 + i, '.', 'A', 'G', 'AF=0.2', 'GT', random_genotypes(rng, 10)) for i in range(5)]
+    write(tmp_path / 'in.vcf', vcf(SAMPLES, records).replace('\n', '\r\n'))
+    proc = run_stdout(tmp_path / 'in.vcf', env={'PROHAP_FALLBACK': fallback} if fallback else None)
+    assert proc.returncode == 3
+    assert b'the filter stops on input it does not handle' in proc.stderr and FALLBACK.encode() not in proc.stderr
+    assert not (tmp_path / '-').exists() and not (Path.cwd() / '-').exists()

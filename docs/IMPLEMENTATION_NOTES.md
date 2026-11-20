@@ -742,3 +742,41 @@ the stdout counts of the filter). `tests/test_restrict_to_exons.py` checks the s
 crafted and random chunks, and runs the 1kG fixture with IDs set: fast with the option = fast without (every output
 but the filtered VCF), legacy with it = fast with it.
 
+### 8.2 The filter fused into `prohap.py` (F3)
+
+The legacy arm writes the filtered VCF gzipped (`filter_phased_vcf`), and `prohap.py` decompresses and reads it
+again. In the fast arm `compute_haplotypes` runs `prohap.py -filter_glob GLOB -filter_af AF -filter_af_field FIELD`
+instead of `-i FILE`, and `filter_phased_vcf` does not run (the Snakefile branches on `implementation`):
+
+- `prohap.py` starts `vcf_filter_fix.py ... -o -` (`src/modules/fused.py`, `FilterReader`), which writes the
+  filtered lines uncompressed to a pipe and its messages to stderr. The lines are the file's lines, so the line
+  numbers that name `.` IDs are the same. The filter runs in its own process, beside `prohap.py`'s reader, which is
+  the bottleneck at cohort scale; nothing is compressed or decompressed in between.
+- The pipe can be read once, so the header is read once and the stream stays open for the sweep (the unfused path
+  opens the file twice).
+- `-o -` cannot hand input to the reference (the reference would write a file named `-`): the filter stops with exit
+  status 3, which `FilterReader.finish` turns into `Unsupported`. On `Unsupported` from either side,
+  `to_legacy_fused` runs `vcf_filter_fix.py` (which falls back itself if it must) into `-tmp_dir`, then the
+  reference `prohap.py` on that file, removes the file and exits with the reference's status. `PROHAP_FALLBACK=error`
+  stops with status 3 as before.
+- The filtered VCF is no longer an output of the fast arm. `verify` and `tests/legacy_vs_fast.sh` no longer compare
+  it (decision 2026-11-20); the fast filter is still checked against the reference filter by
+  `tests/test_filter_fast.py`, including `-o -` against the file it writes otherwise.
+
+Tests: `tests/test_prohap_fast.py` (`test_fused*`) runs the fused script against the reference's two steps on the
+crafted cases, including a carriage return (the filter stops, the fallback runs both steps), unphased genotypes
+(`prohap.py` stops), `-af` and an AF threshold in the filter.
+
+Measured on the benchmark block (60 transcripts of chromosome 22, `-threads 4`, filter at AF 0), the filter and
+`prohap.py` as two steps against the fused `prohap.py`, Mac with a load of about 5 from other jobs (2026-11-20):
+
+| Samples | two steps: wall / CPU / peak | fused: wall / CPU / peak |
+| --- | --- | --- |
+| 26,000 | 4.8 s / 11.0 s / 0.81 GB | 4.6 s / 10.1 s / 0.84 GB |
+| 500,000 | 187 s / 309 s / 3.8 GB | 150 s / 229 s / 4.1 GB |
+
+At 500,000 samples the filtered text is 139 GB (69,551 lines of 2 MB) and 0.83 GB gzipped: the fused run saves its
+compression and decompression (a quarter of the CPU) and overlaps the filter with the sweep, so the step takes about
+as long as `prohap.py` alone did (1.25× wall here, less than the design's 2×, which assumed the two steps took
+about as long). The filter's process adds about 0.3 GB.
+

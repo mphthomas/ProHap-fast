@@ -69,10 +69,11 @@ A good first check is `--chromosomes 21,22 --samples 2000 --transcripts 50`, the
 ## What is compared
 
 Every file that the scripts switched by `implementation` write, in workflow order: the cleaned reference proteome
-(and the transcript list, when it is built in the work directory); the filtered VCF, haplotype table, protein FASTA
+(and the transcript list, when it is built in the work directory); the haplotype table, protein FASTA
 and removed-samples log (`log/prohap_chr<c>.log`) of each chromosome; the merged table; `haplo_table_file` and its sample-ID table; `haplo_fasta_file`; `haplo_cdna_file` if set; the cleaned and
 de-duplicated intermediate FASTAs; `final_fasta_file`; and the simplified FASTA and header table. With ProVar on,
-its table and FASTA too. Files are compared after decompression, because gzip headers carry a timestamp. A gzip file
+its table and FASTA too. Not the filtered VCF: ProHap-fast filters inside `prohap.py` and never writes it (the
+fast filter is checked against the reference filter by `tests/test_filter_fast.py`). Files are compared after decompression, because gzip headers carry a timestamp. A gzip file
 never equals a plain one.
 
 The table shows the first 12 characters of each sha256 (`report.tsv` has them in full), IDENTICAL or DIFFERENT, and

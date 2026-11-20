@@ -125,11 +125,9 @@ def test_expected_outputs():
     assert out == [
         ('data/fasta/ensembl_reference_proteinDB_113_clean.fa.gz', True),
         ('data/fasta/crap_tagged.fa.gz', False),
-        ('data/vcf/phased/chr21_phased_filtered.vcf.gz', True),
         ('results/haplotypes_tmp/haplo_chr21.tsv.gz', True),
         ('results/haplotypes_tmp/haplo_chr21.fa.gz', True),
         ('log/prohap_chr21.log', False),
-        ('data/vcf/phased/chrX_phased_filtered.vcf.gz', True),
         ('results/haplotypes_tmp/haplo_chrX.tsv.gz', True),
         ('results/haplotypes_tmp/haplo_chrX.fa.gz', True),
         ('log/prohap_chrX.log', False),

@@ -404,7 +404,7 @@ def expected_outputs(cfg, refs):
     for c in cfg['chromosomes']:
         if cfg.get('restrict_to_exons'):
             out.append(('data/vcf/phased/chr%s_exons.vcf.gz' % c, True))
-        out.append(('data/vcf/phased/chr%s_phased_filtered.vcf.gz' % c, True))
+        # no filtered VCF: the fast arm filters inside prohap.py (F3) and writes none
         out.append(('%s/haplo_chr%s.tsv.gz' % (haplo, c), True))
         out.append(('%s/haplo_chr%s.fa%s' % (haplo, c, fasta_gz), True))
         out.append(('log/prohap_chr%s.log' % c, False))      # the removed-samples log; none for an empty VCF

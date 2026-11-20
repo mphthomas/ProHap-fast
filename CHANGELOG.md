@@ -18,6 +18,14 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   whose ID is `.`, which are numbered by their line in the filtered VCF. For whole-genome VCFs, where most records
   are outside exons. Indexed BCF can be read this way.
 
+### Changed
+
+- **The fast implementation filters the VCF inside `prohap.py`; the output is the same.** The filter's output was
+  written gzipped to `data/vcf/phased/chr<c>_phased_filtered.vcf.gz` and read back by `prohap.py`; now `prohap.py`
+  runs the filter as a separate process and reads its output through a pipe. That file is no longer written by the
+  fast implementation, so `verify` no longer compares it. At 500,000 samples on the
+  benchmark block this takes a quarter less CPU and a fifth less time.
+
 ## [0.3.0] - 2026-11-19
 
 ### Changed

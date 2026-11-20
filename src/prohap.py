@@ -9,6 +9,10 @@ is handed to a worker as soon as the reference's queue would release it, and the
 (modules/haplotypes.py) and protein haplotypes (modules/proteins.py). This process writes the results in the order of
 the transcripts (all_transcripts), numbering haplotypes and FASTA accessions over the whole chromosome as the
 reference does. Input the fast path does not reproduce exactly hands the run to the reference (modules/fallback.py).
+
+With -filter_glob (and -filter_af, -filter_af_field) instead of -i, the filter runs fused (F3, modules/fused.py): the
+chunks are filtered by vcf_filter_fix.py in a process of its own and read from it through a pipe, so the filtered VCF
+is neither written nor read back.
 '''
 
 import argparse
@@ -26,6 +30,7 @@ from pandas.io.common import infer_compression
 
 from modules.cdna import read_sequences
 from modules.fallback import Unsupported, to_legacy
+from modules.fused import FilterReader, to_legacy_fused
 from modules.legacy_import import legacy
 from modules.pandas_emulation import emulate_id_column, pandas_chunk_rows
 from modules.sweep import FIXED_COLUMNS, RecordParser, VCFReader, assign_records, exon_index, read_header
@@ -39,9 +44,19 @@ result_columns = legacy.process_haplotypes.result_columns
 parser = argparse.ArgumentParser(
         description='Creates a database of CDS + protein haplotypes, and a fasta file of protein haplotype sequences.')
 
-parser.add_argument("-i", dest="input_vcf", required=True,
-                    help="input VCF file", metavar="FILE",
+parser.add_argument("-i", dest="input_vcf", required=False,
+                    help="input VCF file (the filtered VCF); or -filter_glob", metavar="FILE",
                     type=lambda x: check_open_file(parser, x))
+
+parser.add_argument("-filter_glob", dest="filter_glob", required=False,
+                    help="ProHap-fast: the unfiltered VCF chunks (glob), filtered on the fly as vcf_filter_fix.py does; "
+                         "replaces -i")
+
+parser.add_argument("-filter_af", dest="filter_af", required=False, type=float, default=0,
+                    help="with -filter_glob: vcf_filter_fix.py's -af")
+
+parser.add_argument("-filter_af_field", dest="filter_af_field", required=False, default="AF",
+                    help="with -filter_glob: vcf_filter_fix.py's -af_field")
 
 parser.add_argument("-db", dest="annotation_db", required=True,
                     help="DB file created by gffutils from GTF")
@@ -237,10 +252,15 @@ def run(args):
     global TRANSCRIPTS, COHORT, SETTINGS, CHUNK_ROWS
     state = {'pool': None, 'reader': None, 'outputs': None}
 
+    fused = args.filter_glob is not None
     try:
-        print('[ProHap] Computing protein haplotypes from', args.input_vcf.name)
-        input_vcf = args.input_vcf.name
-        args.input_vcf.close()
+        if fused:
+            print('[ProHap] Computing protein haplotypes from', args.filter_glob, '(filtered on the fly)')
+            input_vcf = None
+        else:
+            print('[ProHap] Computing protein haplotypes from', args.input_vcf.name)
+            input_vcf = args.input_vcf.name
+            args.input_vcf.close()
         if args.min_af > 0:
             raise Unsupported('-af above 0 (the workflow does not filter again here)')
 
@@ -267,14 +287,21 @@ def run(args):
                 all_transcripts.append(feature)
         all_transcripts.sort(key=lambda x: x.start)
 
-        # the header of the VCF, and whether it has any record
-        reader = VCFReader(input_vcf)
+        # the header of the VCF, and whether it has any record. The filter's pipe can be read only once: it stays
+        # open for the sweep.
+        reader = FilterReader(args) if fused else VCFReader(input_vcf)
         state['reader'] = reader
-        try:
+        if fused:
             first_line_number, columns, first_line = read_header(reader)
-        finally:
-            reader.close()
-            state['reader'] = None
+            if first_line == b'':
+                reader.finish()
+                state['reader'] = None
+        else:
+            try:
+                first_line_number, columns, first_line = read_header(reader)
+            finally:
+                reader.close()
+                state['reader'] = None
         if first_line == b'':
             print (('Chr ' + args.chromosome + ':'), 'Assigning variants to transcripts.')
             print(('Chr ' + args.chromosome + ':'), 'VCF file is empty, creating empty output files.')
@@ -311,10 +338,11 @@ def run(args):
         pool = Pool(args.threads)
         state['pool'] = pool
         results = queue.Queue()
-        reader = VCFReader(input_vcf)
-        state['reader'] = reader
-        first_line_number, columns_again, first_line = read_header(reader)
-        assert columns_again == columns
+        if not fused:
+            reader = VCFReader(input_vcf)
+            state['reader'] = reader
+            first_line_number, columns_again, first_line = read_header(reader)
+            assert columns_again == columns
         outputs = Outputs(args, args.haplo_id_prefix)
         state['outputs'] = outputs
 
@@ -383,12 +411,19 @@ def run(args):
             state['reader'].close()
         if state['outputs'] is not None:
             state['outputs'].discard()
+        if fused:
+            to_legacy_fused(__file__, args, str(e))
         to_legacy(__file__, str(e))
     except BaseException:
         if state['pool'] is not None:
             state['pool'].terminate()
+        if state['reader'] is not None:
+            state['reader'].close()
         raise
 
 
 if __name__ == '__main__':
-    run(parser.parse_args())
+    parsed = parser.parse_args()
+    if (parsed.input_vcf is None) == (parsed.filter_glob is None):
+        parser.error('give either -i or -filter_glob')
+    run(parsed)

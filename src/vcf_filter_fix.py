@@ -1,10 +1,12 @@
 import argparse
 import glob
+import os
 import subprocess
+import sys
 
 import numpy as np
 
-from modules.fallback import to_legacy
+from modules.fallback import ERROR_STATUS, to_legacy
 from modules.gzip_writer import GzipWriter
 
 # ProHap-fast (IMPLEMENTATION_NOTES section 2): the same arguments, output and printed lines as the reference
@@ -14,6 +16,10 @@ from modules.gzip_writer import GzipWriter
 # copied below. Any carriage return or non-ASCII byte hands the whole run to the reference, whose text-mode reading
 # treats those differently from bytes. The output is gzip level 1, compressed by a thread (the reference uses level
 # 9; the content is the same).
+#
+# `-o -` (fast only, used by prohap.py's -filter_glob, F3): the filtered VCF goes to stdout uncompressed and the
+# messages to stderr; input the fast path does not handle stops the script with exit status 3 instead of handing it to
+# the reference, and prohap.py then runs the steps separately.
 
 parser = argparse.ArgumentParser(
         description='Reads the VCF file, parses multi-allelic variants into multiple lines, and filters out variants under the MAF threshold.')
@@ -31,7 +37,7 @@ parser.add_argument("-chr", dest="chromosome", required=True,
                     help="chromosome being processed (e.g., 1, 12 or X)")
 
 parser.add_argument("-o", dest="output_file", required=True,
-                    help="output VCF")
+                    help="output VCF; - for uncompressed text on stdout (ProHap-fast only)")
 
 args = parser.parse_args()
 
@@ -232,10 +238,36 @@ def fast_line(line, outfile):
     return 1, len(lines)
 
 
+class StdoutWriter:
+    """The filtered VCF as text on stdout, for prohap.py to read through a pipe."""
+
+    def __init__(self):
+        self.out = sys.stdout.buffer
+        self.pending = []
+        self.pending_size = 0
+
+    def write(self, data):
+        self.pending.append(data)
+        self.pending_size += len(data)
+        if self.pending_size >= 1 << 20:
+            self.out.write(b''.join(self.pending))
+            self.pending = []
+            self.pending_size = 0
+
+    def close(self):
+        self.out.write(b''.join(self.pending))
+        self.pending = []
+        self.out.flush()
+
+
 def unsupported(reason):
     for proc in processes:
         if proc.poll() is None:
             proc.kill()
+    if to_stdout:
+        sys.stdout.flush()
+        print('%s (%s): %s' % (STOP_MESSAGE, 'vcf_filter_fix.py', reason), file=sys.stderr, flush=True)
+        os._exit(ERROR_STATUS)
     to_legacy(__file__, reason)
 
 
@@ -252,8 +284,10 @@ processes = []
 # if there are multiple files for the same chromosome (specified, e.g., as "chr22_*.vcf"), process all of them in the alphabetical order
 input_files = sorted(glob.glob(args.input_file))
 
-# the output, gzipped as it is written
-outfile = GzipWriter(args.output_file)
+# the output, gzipped as it is written (or text on stdout)
+to_stdout = args.output_file == '-'
+STOP_MESSAGE = 'ProHap-fast: the filter stops on input it does not handle'
+outfile = StdoutWriter() if to_stdout else GzipWriter(args.output_file)
 
 # Remember the number of original entries and the number of filtered ones
 total_VCF_entries = 0
@@ -296,7 +330,8 @@ for i in range(len(input_files)):
 
 outfile.close()
 
+log = sys.stderr if to_stdout else sys.stdout
 for message in messages:
-    print(message)
-print(('Chr ' + args.chromosome + ':'), 'Original VCF(s):', total_VCF_entries, 'lines')
-print(('Chr ' + args.chromosome + ':'), 'Filtered VCF:', valid_VCF_entries, 'lines')
+    print(message, file=log)
+print(('Chr ' + args.chromosome + ':'), 'Original VCF(s):', total_VCF_entries, 'lines', file=log)
+print(('Chr ' + args.chromosome + ':'), 'Filtered VCF:', valid_VCF_entries, 'lines', file=log)

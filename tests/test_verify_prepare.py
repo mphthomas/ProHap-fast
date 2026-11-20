@@ -386,7 +386,10 @@ def test_dry_run_against_the_tiny_release(tmp_path, monkeypatch):
     fast = yaml.safe_load((run_dir / 'fast' / 'config.yaml').read_text())
     assert fast['chromosomes'] == ['22']
     assert (run_dir / 'input' / 'transcripts_first1.csv').read_text() == 'chromosome,transcriptID\n22,ENST00000000221\n'
-    assert 'filter_phased_vcf' in (run_dir / 'fast.dryrun.log').read_text()
+    # the legacy arm filters into a file; the fast arm filters inside compute_haplotypes (F3)
+    assert 'filter_phased_vcf' in (run_dir / 'legacy.dryrun.log').read_text()
+    fast_log = (run_dir / 'fast.dryrun.log').read_text()
+    assert 'compute_haplotypes' in fast_log and 'filter_phased_vcf' not in fast_log
 
 
 def test_vcfcut_changes_nothing_else(tmp_path):

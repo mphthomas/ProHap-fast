@@ -87,10 +87,12 @@ sim_data() {
     python3 "$ROOT/tests/fixtures/sim/make_data.py" "$1"
 }
 
-# Every file a run wrote: everything in its directory except its config, the links to the inputs and Snakemake's
-# own records in .snakemake/.
+# Every file a run wrote: everything in its directory except its config, the links to the inputs, Snakemake's
+# own records in .snakemake/, and the filtered VCF, which only the legacy arm writes (the fast arm filters inside
+# prohap.py, F3).
 outputs() {
-    (cd "$1" && find . -type f ! -path ./config.yaml ! -path './.snakemake/*' | sed 's|^\./||')
+    (cd "$1" && find . -type f ! -path ./config.yaml ! -path './.snakemake/*' \
+        ! -path './data/vcf/phased/*_phased_filtered.vcf.gz' | sed 's|^\./||')
 }
 
 is_gzip() {

@@ -344,6 +344,8 @@ if RESTRICT_TO_EXONS:
 FILTER_INPUT = ["data/vcf/phased/chr{chr}_exons.vcf.gz"] if RESTRICT_TO_EXONS else []
 FILTER_GLOB = "data/vcf/phased/chr{chr}_exons.vcf.gz" if RESTRICT_TO_EXONS else PHASED_VCF_GLOB
 
+# The legacy arm filters into a file that prohap.py reads back; the fast arm runs the filter inside compute_haplotypes
+# (F3: prohap.py -filter_glob reads the filter's output through a pipe), so filter_phased_vcf runs for legacy only.
 rule filter_phased_vcf:
     input:
         vcf=FILTER_INPUT
@@ -361,7 +363,7 @@ rule compute_haplotypes:
     input:
         db=REF_CHR_DB,
         tr=TRANSCRIPT_LIST,
-        vcf="data/vcf/phased/chr{chr}_phased_filtered.vcf.gz",
+        vcf=FILTER_INPUT if IMPLEMENTATION == 'fast' else "data/vcf/phased/chr{chr}_phased_filtered.vcf.gz",
         fasta=REF_CDNA,
         samples=config['sample_metadata_file']
     output:
@@ -378,13 +380,15 @@ rule compute_haplotypes:
         count_threshold=config['haplo_min_count'],
         x_par1_to=config['x_par1_to'],
         x_par2_from=config['x_par2_from'],
-        max_cores=config['max_cores']
+        max_cores=config['max_cores'],
+        vcf_input=("-filter_glob \'" + FILTER_GLOB + "\' -filter_af " + str(config['phased_min_af']) + " -filter_af_field "
+                   + str(config['phased_af_field'])) if IMPLEMENTATION == 'fast' else "-i \"data/vcf/phased/chr{chr}_phased_filtered.vcf.gz\""
     threads: config['max_cores']
     conda: "envs/prohap.yaml"
     shell:
         "mkdir -p {params.tmp_dir}; mkdir -p log; mkdir -p results; " +
         script('prohap.py') + " "
-        "-i \"{input.vcf}\" -db \"{input.db}\" -transcripts \"{input.tr}\" -cdna \"{input.fasta}\" -s \"{input.samples}\" "
+        "{params.vcf_input} -db \"{input.db}\" -transcripts \"{input.tr}\" -cdna \"{input.fasta}\" -s \"{input.samples}\" "
         "-chr {wildcards.chr} -min_hap_freq {params.freq_threshold} -min_hap_count {params.count_threshold} "
         "-acc_prefix enshap_{wildcards.chr} -id_prefix haplo_chr{wildcards.chr} -require_start {params.require_start} -ignore_UTR {params.ignore_UTR} -skip_start_lost {params.skip_start_lost} "
         "-x_par1_to {params.x_par1_to} -x_par2_from {params.x_par2_from} -threads {params.max_cores} -log \"{params.log_file}\" -tmp_dir \"{params.tmp_dir}\" -output_csv \"{output.csv}\" -output_fasta \"{output.fasta}\" " + 

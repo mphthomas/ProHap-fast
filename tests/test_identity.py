@@ -88,8 +88,9 @@ def test_fixture_is_identical(tmp_path, sample_data, fixture):
     proc = verify(work)
     assert proc.returncode == 0
     rows = table(proc.stdout)
-    # 4 per chromosome (filtered VCF, table, FASTA, log) and 11 others, plus the cDNA FASTA with threshold0
-    assert len(rows) == 4 * 4 + 11 + (fixture == 'threshold0')
+    # 3 per chromosome (table, FASTA, log; no filtered VCF, which the fast arm does not write) and 11 others, plus
+    # the cDNA FASTA with threshold0
+    assert len(rows) == 3 * 4 + 11 + (fixture == 'threshold0')
     assert set(rows.values()) == {'IDENTICAL'}
     assert 'IDENTICAL: all %d outputs' % len(rows) in proc.stdout
     assert 'the legacy arm runs at full scale' in proc.stdout
