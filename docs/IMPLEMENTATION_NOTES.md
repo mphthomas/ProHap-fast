@@ -559,6 +559,49 @@ workflow at that size (`prohap.py` peaks at 6.4 GB). About 60% is the table (20 
 row, used only for HaplotypeID → TranscriptID) and most of the rest the FASTA dict. Follow-up: stream the FASTA and
 keep only that mapping, typed as pandas types the two columns (`perf(S1)`, TODO M9).
 
+### 4.5 As built: streaming `fasta_simplify_headers.py` (S1)
+
+- **The FASTA is read record by record** by a copy of `read_fasta`'s loop (the same tag, accession, description and
+  sequence, including its quirks: a last line without a newline loses its last character, blank lines add nothing).
+  The reference's dict keeps one record per accession, in the first one's place with the last one's content; the
+  script keeps a 64-bit hash of every accession (8 bytes per record) and hands the run to the reference at the end
+  if two are equal (a hash collision among different accessions falls back too, harmlessly).
+- **The haplotype table becomes HaplotypeID -> TranscriptID only**: the IDs as one sorted numpy array of fixed-width
+  byte strings, and a 32-bit code per row for its transcript (the distinct transcript texts are kept once). Lookups
+  are batched per block of 16,384 records (`np.searchsorted`). No chunk typing is needed, because a lookup is only
+  served when pandas certainly keeps both words as their text whatever else is in their chunk (`is_safe_str`): every
+  HaplotypeID of the table must be such a word and unique (otherwise `.loc` sees NaN, numbers or a non-unique index),
+  and so must each TranscriptID that is looked up. Real tables (`haplo_chr<c>_<hex>`, `ENST...`) always are. A table
+  that breaks the rule is fine as long as no record looks anything up, as for the reference. The lines are checked
+  as tsv_stream checks them (field counts, quotes, CR, non-ASCII), since pandas would otherwise read other rows.
+- **Gene names are cached per transcript** (one gffutils query each; about 24,000 in the benchmark).
+- **The header table is written with `to_csv` per block of 16,384 rows.** Every value is a Python str (no NaN, no
+  numbers), so pandas formats and quotes each row on its own (a tab or `"` in an accession is quoted the same way);
+  the first block carries the header, an empty FASTA gives the header alone. The FASTA output is written one record
+  at a time: joining a block into one string made macOS's allocator keep the pages of every such string (RSS grew by
+  50–100 MB per block of 65,536 records while Python's own memory stayed at 0.1 GB).
+- **Fallback triggers**: a carriage return, control or non-ASCII byte in the FASTA; the table's triggers above; a
+  header-table name implying compression other than gzip (the FASTA output follows the reference: gzip when the name
+  ends in `.gz`, else plain); an input that is also an output (the reference reads everything before writing); and
+  everything on which the reference stops (a header without the four fields, a haplotype ID missing from the table or
+  no table, a transcript missing from the DB, a variant ID without `ENST`), which then stops in the reference.
+- Tested by `tests/test_simplify_fast.py`: 33 script cases against the reference (blocks of exactly and around
+  16,384 records, a table of more than 2^20 rows with the longest ID after the first array, quotes and tabs in
+  accessions, custom prefixes, every fallback trigger and every way the reference stops). Dropping the accession
+  check, the uniqueness check, the HaplotypeID check or the per-block header each fails a case.
+
+Measured 2026-11-20 with `bench/bench_simplify.py`, macOS, the reference and the fast script on the same inputs
+(outputs byte-identical):
+
+| Haplotype IDs | Records | reference | fast |
+| ---: | ---: | --- | --- |
+| 100,000 | 90,415 | 4.6 CPU-s, 0.39 GB | 1.4 CPU-s, 0.40 GB |
+| 1,000,000 | 690,415 | 40.6 CPU-s, 1.9 GB | 6.2 CPU-s, 0.38 GB |
+| 4,000,000 | 2,690,415 | 167 CPU-s, 6.3 GB | 21.2 CPU-s, 0.61 GB |
+
+About 5 CPU-s and 80 MB per million IDs beyond a 0.3 GB base (imports, the gffutils DB, one block), so about 2 CPU-min
+and 2.3 GB at 25M IDs, and about 3.2 GB at 37M table rows, against about 17 CPU-min and 44 GB for the reference.
+
 ---
 
 ## 5. Benchmark harness and simulator (`bench/`)

@@ -217,7 +217,7 @@ docker run ... mphthomas/prohap-fast:0.3.0-ensembl.v113 --cores 96 --resources m
 | Resource | 500,000 samples | Notes |
 | --- | --- | --- |
 | Cores | 96 | 23 chromosome jobs × 4 threads; each job also runs its reader and the filter |
-| Memory | about 250 GB | 23 × 10 GB as scheduled (about 4–6.5 GB used); see below for the last step |
+| Memory | about 250 GB | 23 × 10 GB as scheduled (about 4–6.5 GB used); the genome-wide steps need about 3 GB |
 | CPU | about 20–30 CPU-hours | the benchmark block × 315, on an Apple Silicon Mac; slower cores take longer (a TRE ran 4.4× slower) |
 | Wall | chromosome 1 plus the genome-wide steps | about 1.5–2.5 h for chromosome 1 on a fast machine |
 | Scratch | a few times the outputs | the per-chromosome tables and FASTAs (gzipped) until the merged ones are written; `merge_duplicate_seq.py` sorts through temporary files the size of its input |
@@ -230,8 +230,8 @@ saves reading the records outside exons (see [Configuration](#configuration)).
 
 The steps after the chromosome jobs run on the whole genome, one at a time. Merging the per-chromosome tables
 (`merge_tables.py`, `haplo_extract_sample_names.py`) and the protein FASTAs (`merge_duplicate_seq.py`,
-`remove_UTR_seq.py`) each stay at about 1 GB or less. The last, `fasta_simplify_headers.py`, still holds the final
-FASTA and the haplotype table: about 1.75 GB per million haplotype IDs, about 44 GB at 500,000 samples.
+`remove_UTR_seq.py`) each stay at about 1 GB or less, and the last, `fasta_simplify_headers.py`, at about 2–3 GB
+(0.3 GB plus about 80 MB per million haplotype IDs).
 
 The reference code (`implementation: legacy`) is far slower and larger: about 2,600 CPU seconds and 12 GB per block
 at 26,000 samples, and out of reach at 500,000.

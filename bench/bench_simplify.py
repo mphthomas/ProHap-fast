@@ -5,7 +5,8 @@
 
 The step reads the final FASTA, the haplotype table (without samples) and the whole-genome annotation DB, looks up the
 transcript of every haplotype ID in the table (`haplo_df.loc[ID]`) and the gene of every transcript in the DB, and
-writes the simplified FASTA and the header table. It is the same script in both trees (src/ = legacy/src here).
+writes the simplified FASTA and the header table. --src legacy/src measures the reference, which holds the whole
+FASTA and table in memory; src/ streams them (IMPLEMENTATION_NOTES section 4.4).
 
 For each --ids N this writes, into --work/N:
 - final.fa: the MANE Select reference proteins (`generic_ensref|prot_<hex>|position_within_protein:0 start:0
@@ -104,6 +105,7 @@ def main(argv=None):
     if not args.refs:
         parser.error('--refs is required ($PROHAP_REFS does not hold exactly one ensembl.v<release>)')
     refs = os.path.abspath(os.path.expanduser(args.refs))
+    args.src = os.path.abspath(args.src)        # the script runs in --work
     with open(os.path.join(refs, 'release.txt')) as fh:
         release = fh.read().strip()
     db = os.path.join(refs, 'Homo_sapiens.GRCh38.%s.chr_patch_hapl_scaff.db' % release)

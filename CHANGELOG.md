@@ -29,6 +29,10 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   same.** They read it record by record; `merge_duplicate_seq.py` sorts its entries through 128 temporary files in
   the output's directory, one range of sequence hashes each. At 3 million records they need 0.4 and 0.1 GB instead
   of 7.9 and 3.5 GB (at 500,000 samples genome-wide, about 1 GB instead of about 65 GB).
+- **`fasta_simplify_headers.py` streams the final FASTA; the output is the same.** It read the whole FASTA and
+  haplotype table into memory (about 1.75 GB per million haplotype IDs, about 44 GB at 500,000 samples); now it
+  reads the FASTA record by record and keeps only each haplotype's transcript: at 4 million IDs 0.6 GB and 21 CPU
+  seconds instead of 6.3 GB and 167 (about 2.3 GB at 500,000 samples).
 - **Defaults for large cohorts.** `max_cores` may be left out (4 workers per chromosome job). Each chromosome job
   declares `mem_mb_per_chromosome` (default 10000) to Snakemake, so `--resources mem_mb=N` runs only as many
   chromosomes at once as fit in N MB. The README's sizing section is rewritten for 500,000 samples.
