@@ -1,4 +1,4 @@
-"""bench/simulate.py, bench/simulate_fasta.py and bench/bench.py on a tiny synthetic references directory, and the
+"""bench/simulate.py, bench/simulate_fasta.py, bench/simulate_tables.py and bench/bench.py on a tiny synthetic references directory, and the
 consistency of the simulated fixtures (tests/fixtures/sim) with tests/legacy_vs_fast.sh.
 
 Runs in the ProHap environment, without pre-built references (about 30 s):
@@ -21,6 +21,7 @@ pytest.importorskip('numpy')
 ROOT = Path(__file__).resolve().parent.parent
 SIMULATE = ROOT / 'bench' / 'simulate.py'
 SIMULATE_FASTA = ROOT / 'bench' / 'simulate_fasta.py'
+SIMULATE_TABLES = ROOT / 'bench' / 'simulate_tables.py'
 BENCH = ROOT / 'bench' / 'bench.py'
 SIM = ROOT / 'tests' / 'fixtures' / 'sim'
 RELEASE = '113'
@@ -330,6 +331,25 @@ def test_simulate_fasta(refs, tmp_path):
                             r'matching_proteins:[^ ]+ start:0 reading_frame:0(;0)*', h) for h in headers[7:])
     sequences = text.split('\n')[1::2]
     assert len(set(sequences)) < len(sequences)     # duplicates for merge_duplicate_seq.py
+
+
+def test_simulate_tables(tmp_path):
+    def run(out):
+        subprocess.run([sys.executable, str(SIMULATE_TABLES), '--chromosomes', '7,X', '--samples', '2000',
+                        '--transcripts', '3', '--rows', '40', '--listed', '500', '--out', str(out)], check=True,
+                       capture_output=True)
+        return [gzip.open(out / ('haplo_chr%s.tsv.gz' % c), 'rt').read() for c in ('7', 'X')]
+    tables = run(tmp_path / 'a')
+    assert tables == run(tmp_path / 'b')
+    for chrom, text in zip(('7', 'X'), tables):
+        rows = [line.split('\t') for line in text.split('\n')[:-1]]
+        assert rows[0][3] == 'HaplotypeID' and rows[0][-1] == 'samples' and len(rows) == 121
+        assert all(len(r) == 21 and r[1] == chrom for r in rows[1:])
+        assert len({r[3] for r in rows[1:]}) == 120
+        for r in rows[1:]:
+            samples = r[-1].split(';')
+            assert len(samples) == int(r[16])
+            assert all(re.fullmatch(r'S[0-9]{7}:[12]', s) and int(s[1:8]) < 2000 for s in samples)
 
 
 def test_fixture_definitions():

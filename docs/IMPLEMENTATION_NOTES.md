@@ -459,6 +459,34 @@ Measured there on a 135k-row table: merge 40 → 9 s, extract 42 → 10 s; memor
   to its thread in 4 MB slices, so its queue holds at most 32 MB beyond the block being written, not eight whole
   blocks. Outputs ending in `.gz` are written at gzip level 1 (the reference: pandas' default, 9).
 
+### 4.2 `merge_tables.py` (D1)
+
+Writes the first table's header, then the chunks of each table named by `-i`, in order. The headers must be equal
+(pd.concat would align different columns by name); each column's dtypes are joined per table, then across tables.
+`tests/test_tsv_stream.py` runs both scripts on crafted tables: four chromosomes with a header-only table among
+them, plain files, chunk edges at 512 rows (1,030 columns) and at 32,768 (the real 21 columns) with values whose text
+depends on their chunk's type, and one case per fallback trigger and per rewriting mix (each must fall back, and the
+output is then the reference's). Shortening the chunk by one row, or accepting every dtype mix, fails cases.
+
+Measured 2026-11-19 with `bench/simulate_tables.py`: tables like `prohap.py`'s at 500,000 samples (117,000 rows and
+273 MB of text per chromosome, 89% of it `samples`; the benchmark block's output, IMPLEMENTATION_NOTES §5, is 117k
+rows and 293 MB). CPU seconds and peak memory; macOS natively (busy machine), Linux in the arm64 image under Docker
+Desktop (its wall times are dominated by the shared folder, so CPU only):
+
+| Tables | Text | reference, macOS | fast, macOS | reference, Linux | fast, Linux |
+| ---: | ---: | --- | --- | --- | --- |
+| 4 | 1.1 GB | 161 CPU-s, 1.9 GB | 10.5 CPU-s, 1.1 GB | 173 CPU-s, 1.5 GB | 15.8 CPU-s, 0.38 GB |
+| 16 | 4.4 GB | | 42 CPU-s, 1.3 GB | | 59 CPU-s, 0.40 GB |
+
+- 15× less CPU, and memory no longer grows with the table. Python's own allocations peak at 0.3 GB (tracemalloc);
+  macOS's allocator keeps freed blocks of a few hundred KB, hence 1.1–1.3 GB there. Most of the fast time is gzip:
+  `gzip -dc` and the level-1 compression thread, which the main thread waits for about a third of the time; pandas
+  takes about 2 s per GB.
+- Genome-wide at 500,000 samples (315 blocks, about 90 GB of text): the reference would need 1.4–1.7 times the text
+  in memory (125–155 GB) and about 3.7 CPU-h; the fast merge 15–20 CPU-min in 0.4 GB (Linux).
+- Fallback seen on real-looking data: a table whose `chromosome` column is empty (all NaN, float64) next to tables of
+  numbered chromosomes (int64) hands the merge to the reference, which writes `1.0`, `2.0`, ... for them.
+
 ---
 
 ## 5. Benchmark harness and simulator (`bench/`)
