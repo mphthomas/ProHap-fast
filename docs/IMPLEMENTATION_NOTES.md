@@ -501,6 +501,27 @@ Measured as §4.2, on the merged tables:
 | 4 | 1.1 GB | 167 CPU-s, 1.9 GB | 10.3 CPU-s, 1.2 GB | 15.9 CPU-s, 0.40 GB |
 | 16 | 4.4 GB | | 41 CPU-s, 1.4 GB | 61 CPU-s, 0.42 GB |
 
+### 4.4 `fasta_simplify_headers.py` at about 25M IDs
+
+The workflow's last step reads the final FASTA into a dict (`read_fasta`), the haplotype table without samples into
+pandas (`haplo_df.set_index('HaplotypeID')`), and for every haplotype ID of every record looks up its transcript
+(`haplo_df.loc[ID]`) and the transcript's gene in the whole-genome gffutils DB. Measured 2026-11-19 with
+`bench/bench_simplify.py` (MANE reference proteins plus haplotype records with one or two IDs each; the script is
+the same in both trees), macOS:
+
+| Haplotype IDs | Records | CPU-s | Peak |
+| ---: | ---: | ---: | ---: |
+| 100,000 | 90,415 | 4.7 | 0.4 GB |
+| 1,000,000 | 690,415 | 38.9 | 2.0 GB |
+| 4,000,000 | 2,690,415 | 158.4 | 7.3 GB |
+
+Linear: 39 µs and 1.75 GB per million IDs. At 25M IDs (500,000 samples genome-wide: 37M haplotype rows, 25M FASTA
+records) that is about 1,000 CPU-s, which does not dominate (the fast merge and extract take 15–20 CPU-min each),
+but **about 44 GB in one process**, four times the 10 GB per job of the project's goals and the largest of the
+workflow at that size (`prohap.py` peaks at 6.4 GB). About 60% is the table (20 columns of Python objects for every
+row, used only for HaplotypeID → TranscriptID) and most of the rest the FASTA dict. Follow-up: stream the FASTA and
+keep only that mapping, typed as pandas types the two columns (`perf(S1)`, TODO M9).
+
 ---
 
 ## 5. Benchmark harness and simulator (`bench/`)
