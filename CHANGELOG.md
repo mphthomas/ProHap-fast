@@ -29,6 +29,9 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   same.** They read it record by record; `merge_duplicate_seq.py` sorts its entries through 128 temporary files in
   the output's directory, one range of sequence hashes each. At 3 million records they need 0.4 and 0.1 GB instead
   of 7.9 and 3.5 GB (at 500,000 samples genome-wide, about 1 GB instead of about 65 GB).
+- **Defaults for large cohorts.** `max_cores` may be left out (4 workers per chromosome job). Each chromosome job
+  declares `mem_mb_per_chromosome` (default 10000) to Snakemake, so `--resources mem_mb=N` runs only as many
+  chromosomes at once as fit in N MB. The README's sizing section is rewritten for 500,000 samples.
 
 ## [0.3.0] - 2026-11-19
 

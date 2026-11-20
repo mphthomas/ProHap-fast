@@ -90,6 +90,11 @@ haplo_skip_start_lost: 1
 # scales with that, not with this number.
 max_cores: 4
 
+# Memory (MB) each chromosome job declares; run with --resources mem_mb=<what
+# the machine has> and Snakemake runs only as many chromosomes as fit. 10 GB
+# covers ProHap-fast at 500,000 samples (it peaks at about 4-6.5 GB).
+mem_mb_per_chromosome: 10000
+
 haplo_fasta_file: "/results/prohap/cohort_haplotype_translations.fa.gz"  # <<< EDIT
 haplo_cdna_file: ""
 haplo_table_file: "/results/prohap/cohort_haplotypes.tsv.gz"             # <<< EDIT

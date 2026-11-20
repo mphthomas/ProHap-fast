@@ -197,28 +197,44 @@ ignored with a warning while they agree with `ensembl_release`, and stop the run
 
 ## Sizing a large cohort
 
-Snakemake runs one job per chromosome for the heavy steps; `max_cores` in the config is the threads per chromosome
-job, so `--cores` divided by `max_cores` is the number of chromosomes in flight. Memory scales with that number.
-The per-chromosome steps are mostly single-threaded, so parallelism across chromosomes matters more than threads
-within one.
+Snakemake runs one `compute_haplotypes` job per chromosome: the filter and `prohap.py`, which reads the VCF once and
+hands each transcript to `max_cores` worker processes (default 4; more do not help, because the reader is the
+bottleneck). The steps after it run once, on the whole genome. So the run takes about as long as its slowest
+chromosome, chromosome 1 or 2, plus the genome-wide steps, provided every chromosome runs at once.
 
-A cohort of about 27,000 samples with one VCF per chromosome needs, as a starting point, at most:
+Each `compute_haplotypes` job tells Snakemake it needs `mem_mb_per_chromosome` (default 10000, 10 GB), so
+`--resources mem_mb=N` caps the chromosomes in flight to what fits in N MB. Measured on simulated data (60
+transcripts of chromosome 22, a 315th of the exome; IMPLEMENTATION_NOTES sections 3.8 and 8.2): at 500,000 samples
+the job takes about 230 CPU seconds per block and peaks at about 4 GB with four workers (6.4 GB for TTN, the longest
+transcript, alone); at 26,000 samples about 10 CPU seconds and under 1 GB.
 
-| Resource | Suggested | Notes |
+For 500,000 samples, every chromosome at once:
+
+```bash
+docker run ... mphthomas/prohap-fast:0.3.0-ensembl.v113 --cores 96 --resources mem_mb=250000 -p
+```
+
+| Resource | 500,000 samples | Notes |
 | --- | --- | --- |
-| Cores | 16–24 | with `max_cores: 4`, four chromosomes in flight |
-| Memory | 128 GB | chr1/chr2 peak at roughly 10–20 GB each; small chromosomes 2–5 GB |
-| Scratch | 300–500 GB | the per-transcript tables hold every sample column until their chromosome finishes |
+| Cores | 96 | 23 chromosome jobs × 4 threads; each job also runs its reader and the filter |
+| Memory | about 250 GB | 23 × 10 GB as scheduled (about 4–6.5 GB used); see below for the last step |
+| CPU | about 20–30 CPU-hours | the benchmark block × 315, on an Apple Silicon Mac; slower cores take longer (a TRE ran 4.4× slower) |
+| Wall | chromosome 1 plus the genome-wide steps | about 1.5–2.5 h for chromosome 1 on a fast machine |
+| Scratch | a few times the outputs | the per-chromosome tables and FASTAs (gzipped) until the merged ones are written; `merge_duplicate_seq.py` sorts through temporary files the size of its input |
 
-Run one chromosome first (`verify --chromosomes 22`, or `chromosomes: ["22"]`) and measure before a genome-wide
-run. The table was measured with the reference code on a TRE. 0.3.0 needs far less: it writes no per-transcript
-tables, and on simulated data (60 transcripts, a 315th of the exome) the filter and `prohap.py` take 10.5 CPU seconds
-at 26,000 samples instead of 2,644, with `prohap.py` under 1 GB. At 500,000 samples they take 296 CPU seconds, and
-`prohap.py` peaks at 4 GB with four workers (6.4 GB for TTN, the longest transcript, alone). The merge of the
-per-chromosome tables (`merge_tables.py`, `haplo_extract_sample_names.py`) streams them in about 0.4 GB. The last
-step, `fasta_simplify_headers.py`, holds the final FASTA and the haplotype table: about 1.75 GB per million haplotype
-IDs, about 44 GB at 500,000 samples genome-wide, until it is streamed too. A sizing guide for such cohorts comes
-with 1.0.0.
+With fewer cores or less memory, lower `--cores` or `--resources mem_mb`: Snakemake then runs fewer chromosomes at
+a time and the run takes longer, not more memory. These figures are scaled from the benchmark block, not measured on
+a whole genome: run one chromosome first (`verify --chromosomes 22 --transcripts 20` with every sample, then a run
+with `chromosomes: ["22"]`) and measure before a genome-wide run. For whole-genome VCFs, `restrict_to_exons: True`
+saves reading the records outside exons (see [Configuration](#configuration)).
+
+The steps after the chromosome jobs run on the whole genome, one at a time. Merging the per-chromosome tables
+(`merge_tables.py`, `haplo_extract_sample_names.py`) and the protein FASTAs (`merge_duplicate_seq.py`,
+`remove_UTR_seq.py`) each stay at about 1 GB or less. The last, `fasta_simplify_headers.py`, still holds the final
+FASTA and the haplotype table: about 1.75 GB per million haplotype IDs, about 44 GB at 500,000 samples.
+
+The reference code (`implementation: legacy`) is far slower and larger: about 2,600 CPU seconds and 12 GB per block
+at 26,000 samples, and out of reach at 500,000.
 
 ## Building the image
 

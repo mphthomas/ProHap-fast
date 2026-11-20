@@ -232,3 +232,17 @@ def test_refs_dir_with_a_space(workdir, refs_root, tmp_path_factory):
     run = dry_run(workdir, dict(base_config(workdir, refs_root), refs_dir=str(spaced)))
     assert run.returncode != 0
     assert 'contains a space or a shell character' in run.output
+
+
+def test_large_cohort_defaults(workdir, refs_root):
+    """Without max_cores and mem_mb_per_chromosome: 4 workers and 10 GB per chromosome job; set, as set."""
+    cfg = base_config(workdir, refs_root)
+    del cfg['max_cores']
+    run = dry_run(workdir, cfg)
+    assert run.returncode == 0, run.output
+    assert '-threads 4 ' in run.command('compute_haplotypes')
+    assert 'mem_mb=10000' in run.output
+    cfg.update(max_cores=2, mem_mb_per_chromosome=6000)
+    run = dry_run(workdir, cfg)
+    assert '-threads 2 ' in run.command('compute_haplotypes') and 'mem_mb=6000' in run.output
+

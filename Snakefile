@@ -321,6 +321,13 @@ rule var_fasta_remove_stop:
 
 # ------------------------------------ ProHap rules ------------------------------------
 
+# Per chromosome job of compute_haplotypes: max_cores is prohap.py's worker count (the job also runs a reader and, in
+# the fast arm, the filter's process); more than 4 does not help, the reader is the bottleneck. mem_mb_per_chromosome
+# is what the job tells Snakemake's scheduler, so that `--resources mem_mb=N` caps the chromosomes in flight: the fast
+# prohap.py peaks at about 4 GB at 500,000 samples (6.4 GB for TTN alone). The legacy arm needs far more.
+MAX_CORES = int(config.get('max_cores', 4))
+MEM_MB_PER_CHROMOSOME = int(config.get('mem_mb_per_chromosome', 10000))
+
 PHASED_VCF_GLOB = (config['phased_local_path'] + config['phased_vcf_file_name']) if len(config["phased_local_path"]) > 0 else ("data/vcf/phased/" + config['phased_vcf_file_name'])
 
 # Opt-in input preparation (F2), the same for both arms: keep only the records that overlap an exon of a listed
@@ -380,10 +387,12 @@ rule compute_haplotypes:
         count_threshold=config['haplo_min_count'],
         x_par1_to=config['x_par1_to'],
         x_par2_from=config['x_par2_from'],
-        max_cores=config['max_cores'],
+        max_cores=MAX_CORES,
         vcf_input=("-filter_glob \'" + FILTER_GLOB + "\' -filter_af " + str(config['phased_min_af']) + " -filter_af_field "
                    + str(config['phased_af_field'])) if IMPLEMENTATION == 'fast' else "-i \"data/vcf/phased/chr{chr}_phased_filtered.vcf.gz\""
-    threads: config['max_cores']
+    threads: MAX_CORES
+    resources:
+        mem_mb=MEM_MB_PER_CHROMOSOME
     conda: "envs/prohap.yaml"
     shell:
         "mkdir -p {params.tmp_dir}; mkdir -p log; mkdir -p results; " +
