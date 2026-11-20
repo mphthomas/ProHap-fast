@@ -417,17 +417,47 @@ Measured 2026-11-19 with `bench.py` on the quiet Mac (one thread unless stated; 
 
 ---
 
-## 4. `merge_fast.py` / `extract_fast.py` (D1, D2)
+## 4. Streaming `merge_tables.py` and `haplo_extract_sample_names.py` (D1, D2)
 
-Stream lines. Keep each line's fields; every `chunk` lines (`pandas_chunk_rows(21) == 32768`), **and at the end of
-every input file** for the merge, build the text of all columns except `samples`, run
+The recipe from the design work. Stream lines. Keep each line's fields; every `chunk` lines
+(`pandas_chunk_rows(21) == 32768`), **and at the end of every input file** for the merge, build the text of all columns except `samples`, run
 `pd.read_csv(..., sep='\t')` then `to_csv(header=False, index=False, sep='\t')`, and splice the re-formatted values
 back. `samples` is copied verbatim (must contain `:` and not be an NA token). At the end, fall back to legacy if any
 column saw both int and float chunks without an object chunk (that combination re-types ints as `x.0`). Quote
 characters or `\r` → fallback. Extract writes the table without `samples` and `HaplotypeID\tsamples` from the same
 re-formatted fields. `usecols` does not change pandas' chunking (verified), which is why this matches.
 
-Measured on a 135k-row table: merge 40 → 9 s, extract 42 → 10 s; memory one chunk instead of the whole table.
+Measured there on a 135k-row table: merge 40 → 9 s, extract 42 → 10 s; memory one chunk instead of the whole table.
+
+### 4.1 As built in 0.3.0: `src/modules/tsv_stream.py`
+
+- **Chunks as pandas reads them.** `Table` reads a table's lines as bytes (`gzip -dc` in its own process) in blocks of
+  `pandas_chunk_rows(width)` rows (32,768 for the 21 columns of a haplotype table), starting again with each input
+  file, since the reference reads each file with its own `read_csv`. Each block goes through `pd.read_csv` and
+  `to_csv` without its last column. A table one column narrower has chunks at least as long, so pandas types the
+  block as one chunk, which is the reference's chunk.
+- **`samples` is copied, not re-parsed,** when every value of the block contains `:` (`S1:1;S2:2`): pandas keeps such
+  a word as text whatever else is in its chunk, and writes it back as read. Otherwise the block goes through pandas
+  whole, last column included (no fixture takes this path; `test_tsv_stream.py` does).
+- **Joining chunks and tables** (`combined_dtype`). A column keeps every value's text when all its chunks have one
+  dtype, or when one of them is object: an object column holds Python ints, floats and booleans, whose `str()` is
+  the text pandas writes for them in their own dtype (for floats: numpy's shortest repr, checked on 60,000 floats of
+  every magnitude). Tables with no rows count for nothing. Checked against pandas' `concat_compat` (the chunks of one
+  file) and `pd.concat` (the tables) for every mix of int64, uint64, float64, all-missing float64, bool, object and
+  an empty table, in two and three parts (`test_combined_dtype_follows_pandas`). Every other mix rewrites values and
+  hands the run to the reference: int64 next to float64 (`5` becomes `5.0`; also an int64 table next to one whose
+  column is all missing), bool next to int64 (`True` becomes `1`; across tables pd.concat makes it int64, within a
+  file concat_compat makes it an object of ones and zeros), uint64 next to int64 (float64). The check runs at the
+  end of each table and of the merge, after the output is written; the reference then writes it again.
+- **Fallback triggers**: a byte other than tab, newline or printable ASCII, or a quote (which pandas would unquote);
+  a line whose number of fields is not the header's (pandas skips blank lines, pads short ones and stops on long
+  ones); a header with duplicate or empty names, fewer than three columns, or a last column other than `samples`; an
+  input or output whose name implies compression other than gzip.
+- **Memory**: each line is held once (its last field as a memoryview into it, the other fields as one short copy),
+  and a block is handed to a callback rather than yielded, so nothing of the previous block is alive while the next
+  is read. `GzipWriter` (moved from `vcf_filter_fix.py` to `modules/gzip_writer.py`) hands writes of more than 4 MB
+  to its thread in 4 MB slices, so its queue holds at most 32 MB beyond the block being written, not eight whole
+  blocks. Outputs ending in `.gz` are written at gzip level 1 (the reference: pandas' default, 9).
 
 ---
 
