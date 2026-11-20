@@ -487,6 +487,20 @@ Desktop (its wall times are dominated by the shared folder, so CPU only):
 - Fallback seen on real-looking data: a table whose `chromosome` column is empty (all NaN, float64) next to tables of
   numbered chromosomes (int64) hands the merge to the reference, which writes `1.0`, `2.0`, ... for them.
 
+### 4.3 `haplo_extract_sample_names.py` (D2)
+
+Reads the merged table in its chunks (one file, so one chunking from start to end, as the reference's
+`read_table`) and writes both outputs from the same re-formatted fields: the table without its last column, and
+`HaplotypeID` with `samples`. A table without `HaplotypeID` goes to the reference, which stops. Tested by the same
+cases as the merge, each run through both scripts in turn.
+
+Measured as §4.2, on the merged tables:
+
+| Tables | Text | reference, macOS | fast, macOS | fast, Linux |
+| ---: | ---: | --- | --- | --- |
+| 4 | 1.1 GB | 167 CPU-s, 1.9 GB | 10.3 CPU-s, 1.2 GB | 15.9 CPU-s, 0.40 GB |
+| 16 | 4.4 GB | | 41 CPU-s, 1.4 GB | 61 CPU-s, 0.42 GB |
+
 ---
 
 ## 5. Benchmark harness and simulator (`bench/`)

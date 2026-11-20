@@ -1,11 +1,11 @@
-"""src/modules/tsv_stream.py, and src/merge_tables.py (D1) against legacy/src/merge_tables.py, as scripts, on crafted
-haplotype tables:
+"""src/modules/tsv_stream.py, and src/merge_tables.py (D1) and src/haplo_extract_sample_names.py (D2) against their
+legacy/src counterparts, as scripts, on crafted haplotype tables:
 
     pytest tests/test_tsv_stream.py
 
 pandas reads a table in chunks of rows whose number depends on the table's width (32,768 for the 21 columns of a
 haplotype table, 512 for 1,030 columns) and types each column of each chunk on its own. The cases put values whose
-text depends on their chunk's type on both sides of chunk edges, at both widths, and check that the fast script writes
+text depends on their chunk's type on both sides of chunk edges, at both widths, and check that the fast scripts write
 the same bytes as the reference, or hand the run to it where joining the chunks rewrites values.
 """
 import bz2
@@ -215,32 +215,37 @@ def replace_field(tables, table, line, column, value):
         value if i == column else f for i, f in enumerate(text.split('\t'))))
 
 
-# name: (tables, input suffix, output suffix, fast path?)
+# name: (tables, input suffix, output suffix, merge fast?, extract fast?, does the reference stop?)
 CASES = {
-    'haplotype_tables': (haplo_tables(), '.tsv.gz', '.tsv.gz', True),
-    'plain_files': (haplo_tables(seed=5), '.tsv', '.tsv', True),
-    'one_table': (haplo_tables(seed=6, sizes=(500,), chromosomes=('X',)), '.tsv.gz', '.tsv', True),
-    'only_headers': (haplo_tables(sizes=(0, 0)), '.tsv.gz', '.tsv.gz', True),
-    'no_last_newline': (without_last_newline(haplo_tables(seed=7), 3), '.tsv.gz', '.tsv.gz', True),
-    'chunk_edges': (edge_tables(), '.tsv.gz', '.tsv.gz', True),
-    'real_width_chunk_edge': (real_width_edges(), '.tsv.gz', '.tsv.gz', True),
+    'haplotype_tables': (haplo_tables(), '.tsv.gz', '.tsv.gz', True, True, False),
+    'plain_files': (haplo_tables(seed=5), '.tsv', '.tsv', True, True, False),
+    'one_table': (haplo_tables(seed=6, sizes=(500,), chromosomes=('X',)), '.tsv.gz', '.tsv', True, True, False),
+    'only_headers': (haplo_tables(sizes=(0, 0)), '.tsv.gz', '.tsv.gz', True, True, False),
+    'no_last_newline': (without_last_newline(haplo_tables(seed=7), 3), '.tsv.gz', '.tsv.gz', True, True, False),
+    'chunk_edges': (edge_tables(), '.tsv.gz', '.tsv.gz', True, True, False),
+    'real_width_chunk_edge': (real_width_edges(), '.tsv.gz', '.tsv.gz', True, True, False),
     # handed to the reference: pandas joins the chunks by rewriting values
-    'int_then_float': (mixed(6, str, lambda i: '%d.5' % i), '.tsv.gz', '.tsv.gz', False),
-    'int_then_missing': (mixed(6, str, lambda i: 'NA' if i % 2 else str(i)), '.tsv.gz', '.tsv.gz', False),
-    'bool_then_int': (mixed(6, lambda i: 'True', str), '.tsv.gz', '.tsv.gz', False),
-    'uint_then_int': (mixed(6, lambda i: str(2 ** 63 + i), str), '.tsv.gz', '.tsv.gz', False),
-    'int_file_and_float_file': (wide_files(str, lambda i: '%d.5' % i), '.tsv.gz', '.tsv.gz', False),
-    # handed to the reference: input the script does not handle
-    'quote': (replace_field(haplo_tables(), 0, 5, 4, '"rs1"'), '.tsv.gz', '.tsv.gz', False),
-    'carriage_return': ([t.replace('\n', '\r\n') for t in haplo_tables()], '.tsv.gz', '.tsv.gz', False),
-    'non_ascii': (replace_field(haplo_tables(), 1, 3, 2, 'protéin'), '.tsv.gz', '.tsv.gz', False),
-    'short_line': (edit_line(haplo_tables(), 1, 7, lambda t: t.rsplit('\t', 1)[0]), '.tsv.gz', '.tsv.gz', False),
-    'blank_line': (edit_line(haplo_tables(), 0, 9, lambda t: ''), '.tsv.gz', '.tsv.gz', False),
-    'different_columns': ([t.replace('frequency_population', 'pop', 1) if i == 1 else t
-                           for i, t in enumerate(haplo_tables())], '.tsv.gz', '.tsv.gz', False),
-    'samples_not_last': ([t.replace('\tsamples\n', '\tsamples2\n', 1) for t in haplo_tables()], '.tsv.gz', '.tsv.gz',
+    'int_then_float': (mixed(6, str, lambda i: '%d.5' % i), '.tsv.gz', '.tsv.gz', False, True, False),
+    'int_then_missing': (mixed(6, str, lambda i: 'NA' if i % 2 else str(i)), '.tsv.gz', '.tsv.gz', False, True,
                          False),
-    'bz2_output': (haplo_tables(), '.tsv.gz', '.tsv.bz2', False),
+    'bool_then_int': (mixed(6, lambda i: 'True', str), '.tsv.gz', '.tsv.gz', False, True, False),
+    'uint_then_int': (mixed(6, lambda i: str(2 ** 63 + i), str), '.tsv.gz', '.tsv.gz', False, True, False),
+    'int_file_and_float_file': (wide_files(str, lambda i: '%d.5' % i), '.tsv.gz', '.tsv.gz', False, True, False),
+    # handed to the reference: input the scripts do not handle
+    'quote': (replace_field(haplo_tables(), 0, 5, 4, '"rs1"'), '.tsv.gz', '.tsv.gz', False, True, False),
+    'carriage_return': ([t.replace('\n', '\r\n') for t in haplo_tables()], '.tsv.gz', '.tsv.gz', False, True, False),
+    'non_ascii': (replace_field(haplo_tables(), 1, 3, 2, 'protéin'), '.tsv.gz', '.tsv.gz', False, False, False),
+    'short_line': (edit_line(haplo_tables(), 1, 7, lambda t: t.rsplit('\t', 1)[0]), '.tsv.gz', '.tsv.gz', False,
+                   True, False),
+    'blank_line': (edit_line(haplo_tables(), 0, 9, lambda t: ''), '.tsv.gz', '.tsv.gz', False, True, False),
+    'different_columns': ([t.replace('frequency_population', 'pop', 1) if i == 1 else t
+                           for i, t in enumerate(haplo_tables())], '.tsv.gz', '.tsv.gz', False, False, False),
+    'samples_not_last': ([t.replace('\tsamples\n', '\tsamples2\n', 1) for t in haplo_tables()], '.tsv.gz', '.tsv.gz',
+                         False, False, True),
+    'bz2_output': (haplo_tables(), '.tsv.gz', '.tsv.bz2', False, False, False),
+    # the reference stops
+    'no_haplotype_id': ([t.replace('HaplotypeID', 'HaplotypeName', 1) for t in haplo_tables()], '.tsv.gz', '.tsv.gz',
+                        True, False, True),
 }
 
 
@@ -263,7 +268,7 @@ def read(path):
 
 
 def run_case(case, name):
-    tables, suffix, out_suffix, _ = CASES[name]
+    tables, suffix, out_suffix, _, _, _ = CASES[name]
     inputs = []
     for i, text in enumerate(tables):
         path = case / ('haplo_chr%d%s' % (i, suffix))
@@ -277,7 +282,17 @@ def run_case(case, name):
         merged = out / ('all' + out_suffix)
         merge = subprocess.run([sys.executable, str(src / 'merge_tables.py'), '-i', ','.join(inputs), '-o',
                                 str(merged)], capture_output=True, text=True, env=env)
-        result[arm] = merge, (read(merged) if merge.returncode == 0 else None)
+        extract = None
+        files = {}
+        if merge.returncode == 0:
+            files['all'] = read(merged)
+            extract = subprocess.run([sys.executable, str(src / 'haplo_extract_sample_names.py'), '-hap_tsv',
+                                      str(merged), '-o', str(out / ('table' + out_suffix)), '-samples',
+                                      str(out / ('samples' + out_suffix))], capture_output=True, text=True, env=env)
+            for name_ in ('table', 'samples'):
+                if (out / (name_ + out_suffix)).exists() and extract.returncode == 0:
+                    files[name_] = read(out / (name_ + out_suffix))
+        result[arm] = merge, extract, files
     return result
 
 
@@ -296,10 +311,17 @@ def results(tmp_path_factory):
 
 @pytest.mark.parametrize('name', list(CASES))
 def test_case(results, name):
-    fast_path = CASES[name][3]
-    legacy, legacy_output = results[name]['legacy']
-    fast, output = results[name]['fast']
-    assert legacy.returncode == 0, legacy.stderr
-    assert fast.returncode == 0, fast.stderr
-    assert (FALLBACK in fast.stderr) == (not fast_path), fast.stderr
-    assert output == legacy_output
+    _, _, _, merge_fast, extract_fast, stops = CASES[name]
+    legacy_merge, legacy_extract, legacy_files = results[name]['legacy']
+    merge, extract, files = results[name]['fast']
+    assert legacy_merge.returncode == 0, legacy_merge.stderr
+    assert merge.returncode == 0, merge.stderr
+    assert (FALLBACK in merge.stderr) == (not merge_fast), merge.stderr
+    assert (FALLBACK in extract.stderr) == (not extract_fast), extract.stderr
+    if stops:
+        assert legacy_extract.returncode != 0 and extract.returncode != 0, (legacy_extract.stderr, extract.stderr)
+    else:
+        assert legacy_extract.returncode == 0, legacy_extract.stderr
+        assert extract.returncode == 0, extract.stderr
+        assert set(files) == {'all', 'table', 'samples'}
+    assert files == legacy_files
