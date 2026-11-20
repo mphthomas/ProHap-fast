@@ -142,6 +142,13 @@ def check(chunks_by_chrom, metadata_names, tabix=None):
         if not paths:
             warnings.append('chromosome %s: no VCF matches the input pattern, so it gets no haplotypes' % chrom)
             continue
+        bcf = [p for p in paths if p.endswith('.bcf')]
+        if bcf:
+            notes.append('%s: BCF chunks are not scanned (restrict_to_exons reads them with bcftools)'
+                         % ', '.join(os.path.relpath(p) for p in bcf))
+            paths = [p for p in paths if not p.endswith('.bcf')]
+            if not paths:
+                continue
         scanned = [scan(p) for p in paths]
         first = scanned[0]
         for c in scanned:

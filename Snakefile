@@ -321,14 +321,36 @@ rule var_fasta_remove_stop:
 
 # ------------------------------------ ProHap rules ------------------------------------
 
+PHASED_VCF_GLOB = (config['phased_local_path'] + config['phased_vcf_file_name']) if len(config["phased_local_path"]) > 0 else ("data/vcf/phased/" + config['phased_vcf_file_name'])
+
+# Opt-in input preparation (F2), the same for both arms: keep only the records that overlap an exon of a listed
+# transcript, read from the indexed VCF chunks. Changes the IDs given to records whose ID is '.' (line numbers).
+RESTRICT_TO_EXONS = bool(config.get('restrict_to_exons', False))
+if RESTRICT_TO_EXONS:
+    rule restrict_to_exons:
+        input:
+            db=REF_CHR_DB,
+            tr=TRANSCRIPT_LIST
+        output:
+            temp("data/vcf/phased/chr{chr}_exons.vcf.gz")
+        params:
+            input_file_glob=PHASED_VCF_GLOB
+        threads: 2
+        shell:
+            "mkdir -p data/vcf/phased ; python3 " + shlex.quote(os.path.join(workflow.basedir, 'tools', 'restrict_to_exons.py')) +
+            " -i \'{params.input_file_glob}\' -chr {wildcards.chr} -db {input.db} -transcripts {input.tr} -o {output} -threads {threads}"
+
+# The chunks the filter reads; without restrict_to_exons, no rule input: the script finds them from the glob pattern.
+FILTER_INPUT = ["data/vcf/phased/chr{chr}_exons.vcf.gz"] if RESTRICT_TO_EXONS else []
+FILTER_GLOB = "data/vcf/phased/chr{chr}_exons.vcf.gz" if RESTRICT_TO_EXONS else PHASED_VCF_GLOB
+
 rule filter_phased_vcf:
-    # Skip the input as it will be inferred by the script from the glob pattern
-    #input:
-    #    vcf=expand('{proxy}', proxy=[config['phased_local_path'] + config['phased_vcf_file_name']] if len(config["phased_local_path"]) > 0 else ["data/vcf/phased/" + config['phased_vcf_file_name']])
+    input:
+        vcf=FILTER_INPUT
     output:
         temp("data/vcf/phased/chr{chr}_phased_filtered.vcf.gz")
     params:
-        input_file_glob=(config['phased_local_path'] + config['phased_vcf_file_name']) if len(config["phased_local_path"]) > 0 else ("data/vcf/phased/" + config['phased_vcf_file_name']),
+        input_file_glob=FILTER_GLOB,
         AF_threshold=config['phased_min_af'],
         AF_field=config['phased_af_field']
     shell:

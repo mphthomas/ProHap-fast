@@ -54,6 +54,13 @@ phased_vcf_file_name: "chr{chr}_cohort_phased.vcf.gz"                    # <<< E
 # files per chromosome are fine. It is the ONLY brace expression allowed in
 # these two values.
 
+# True reads only the records that overlap an exon of a listed transcript,
+# through the index: every chunk must be bgzip-compressed and indexed
+# (tabix -p vcf), or BCF with a bcftools index. Worth it for whole-genome VCFs.
+# Records with ID "." are named by their line in the filtered VCF, so they get
+# other names than without this option: set IDs first if that matters.
+restrict_to_exons: False
+
 # Must list every sample in the VCF. Samples absent from this file are silently
 # dropped from the analysis and from all frequency calculations. Required
 # columns: "Sample name", "Sex" (value "male" for males), "Population code",

@@ -152,8 +152,8 @@ of samples. Details, and what each check covers: [verify/README.md](verify/READM
 ## Input requirements
 
 - **Phased, multi-sample VCF**, one chromosome per file or several chunks per chromosome (a glob in
-  `phased_vcf_file_name`). Text VCF, plain or gzip/bgzip; convert BCF with `bcftools view -Ov`. Records sorted by
-  position.
+  `phased_vcf_file_name`). Text VCF, plain or gzip/bgzip; convert BCF with `bcftools view -Ov`, or index it and set
+  `restrict_to_exons` (below). Records sorted by position.
 - **Chunks** are read in alphabetical order and only the first header is kept, so their names must sort in genomic
   order, they must not overlap, and every chunk must list the same samples in the same order.
 - **Genotypes**: `FORMAT` is `GT` alone, phased, one character per allele (`0|1`, `.|0`, haploid `1` for chrX in
@@ -185,6 +185,12 @@ Start from [`config_tre_template.yaml`](config_tre_template.yaml) (also in the i
   instead. `haplo_min_freq: 0` keeps every private haplotype, which at cohort scale gives a database too large to
   search.
 - `final_fasta_file` must not end in `.gz`; the other output names may.
+- `restrict_to_exons: True` (default `False`) reads only the VCF records that overlap an exon of a listed
+  transcript, through the index, before the filter; the rest of the workflow sees the same records in the same
+  order. Worth it for whole-genome VCFs, where about 1 record in 50 is exonic. Every chunk must be indexed
+  (bgzip + `tabix -p vcf`, or BCF + `bcftools index`; BCF is read only this way). Records with ID `.` get other
+  names, since they are named by their line in the filtered VCF: set IDs first (`bcftools annotate --set-id`) if
+  results must match a run without the option. `verify` applies the option to both arms alike.
 
 Settings of upstream ProHap that downloaded files (`Ensembl_FTP_URL`, `annotationFilename`, `phased_FTP_URL`) are
 ignored with a warning while they agree with `ensembl_release`, and stop the run when they do not.

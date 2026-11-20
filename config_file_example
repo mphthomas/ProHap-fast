@@ -64,6 +64,7 @@ haplo_added_fasta: <path to the fasta file (one of the F3 files in the Zenodo re
 
 phased_local_path: "/data/phased_vcfs/"   # directory containing the phased VCF files (nothing is downloaded; upstream's phased_FTP_URL is ignored)
 phased_vcf_file_name: "ALL.chr{chr}.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf"   # {chr} is replaced by each chromosome. Globbing (* or ?) is allowed, for several chunks per chromosome: they are read in alphabetical order
+restrict_to_exons: False  # True: read only the records that overlap an exon of a listed transcript, through the index (every chunk bgzip + tabix, or BCF + bcftools index). Saves reading most of a whole-genome VCF; records with ID "." get other names (their line number in the filtered VCF), so set IDs first if results must match a run without it
 sample_metadata_file: "igsr_samples.tsv"  # samples metadata (see https://github.com/ProGenNo/ProHap/wiki/Input-&-Usage#prohap for details)
 
 working_dir_name_haplo: haplotypes_tmp  # directory for temp. files where haplotypes will be processed - default: haplotypes_tmp

@@ -710,3 +710,35 @@ upstream; fixing one is a deliberate output change made in both trees. Line numb
 5. **No cDNA FASTA for a chromosome with no variants.** `empty_output` (line 36) writes only the table and the
    protein FASTA, so with `haplo_cdna_file` set the `merge_fasta` rule fails: `cat: ...haplo_cdna_chr22.fa: No such
    file or directory`, under bash strict mode. Checked on 1kG chr22 with `phased_min_af: 1.1`.
+
+---
+
+## 8. Input preparation and defaults (M9)
+
+### 8.1 `restrict_to_exons` (F2)
+
+`prohap.py` gives a transcript a record when `exon.start < POS + len(REF)` and `exon.end >= POS` for one of its
+exons (`add_variants_to_transcripts`), so a record that meets no exon of a listed transcript never reaches any
+output, except through the line numbers that name `.` IDs. With whole-genome input those records are most of the
+file, and both the filter and `prohap.py` read every one of them.
+
+`tools/restrict_to_exons.py`, run by the `restrict_to_exons` rule for both arms when the config sets it:
+
+- Regions: the exons of every transcript of the list on the chromosome (as `prohap.py` selects them, before its
+  start-codon check, so a superset), from the chromosome's gffutils DB, sorted and merged.
+- VCF chunks (bgzip + .tbi/.csi): `tabix -h -u -R regions.tsv` (1-based, inclusive regions file). tabix uses
+  `[POS, POS + len(REF) - 1]` (or INFO END), the rule above. `-u` writes a record that meets several regions once;
+  without it, a long deletion across a gap between two merged regions comes out twice, out of order
+  (`test_crafted_edges`). Only the first chunk's header, as the filter keeps it.
+- BCF chunks (.csi): `bcftools view -R --regions-overlap record -Ov`. bcftools rewrites the text (header lines,
+  float formatting), which does not matter for BCF, which the reference cannot read at all. Not used for VCF text
+  for that reason (decision of M3, `verify/vcfcut.py`).
+- Output: bgzip level 1, `data/vcf/phased/chr<c>_exons.vcf.gz` (temp); the filter reads it instead of the glob.
+- The contig is the chromosome's name with or without `chr` (`MT`/`chrM` alike); records of other contigs are
+  dropped with a message, an unindexed chunk is an error naming the option.
+
+Both arms see the same records, so `verify` holds; against a run without the option only `.` IDs change (and
+the stdout counts of the filter). `tests/test_restrict_to_exons.py` checks the selection against the rule on
+crafted and random chunks, and runs the 1kG fixture with IDs set: fast with the option = fast without (every output
+but the filtered VCF), legacy with it = fast with it.
+

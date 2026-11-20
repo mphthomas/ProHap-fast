@@ -10,6 +10,14 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 
 ## [Unreleased]
 
+### Added
+
+- **`restrict_to_exons`** (opt-in, default `False`): read only the VCF records that overlap an exon of a listed
+  transcript, through the index of each chunk (bgzip + tabix, or BCF + `bcftools index`), before the filter. The
+  workflow then sees the same records in the same order, so the output is the same except for the names of records
+  whose ID is `.`, which are numbered by their line in the filtered VCF. For whole-genome VCFs, where most records
+  are outside exons. Indexed BCF can be read this way.
+
 ## [0.3.0] - 2026-11-19
 
 ### Changed

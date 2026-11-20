@@ -42,6 +42,7 @@ import os
 import random
 import re
 import resource
+import shlex
 import shutil
 import subprocess
 import sys
@@ -136,9 +137,11 @@ def phased_pattern(cfg):
     return (local if local else 'data/vcf/phased/') + str(cfg['phased_vcf_file_name'])
 
 
-def chunks(pattern, chrom):
-    """The VCF chunks of one chromosome, in the order the legacy filter reads them."""
-    return sorted(glob.glob(pattern.replace('{chr}', str(chrom))))
+def chunks(pattern, chrom, restrict=False):
+    """The VCF chunks of one chromosome, in the order the legacy filter reads them (restrict_to_exons: index files
+    left out, as tools/restrict_to_exons.py does)."""
+    paths = sorted(glob.glob(pattern.replace('{chr}', str(chrom))))
+    return [p for p in paths if not p.endswith(('.tbi', '.csi'))] if restrict else paths
 
 
 def transcript_source(cfg, refs):
@@ -178,7 +181,7 @@ class Run:
         self.refs = refs_root(cfg)
         self.pattern = phased_pattern(cfg)
         self.chromosomes = self.select_chromosomes()
-        self.chunks = {c: chunks(self.pattern, c) for c in self.chromosomes}
+        self.chunks = {c: chunks(self.pattern, c, bool(cfg.get('restrict_to_exons'))) for c in self.chromosomes}
         self.overrides = {}
 
     def arm_dir(self, arm):
@@ -291,6 +294,7 @@ def subset_vcfs(run, samples):
     differ from the originals only by the columns of the other samples, so every record keeps its line number. Chunk
     names are kept (prefixed with their position when a chromosome's chunks come from more than one directory), so
     the filter reads them in the same order and as gzip or text, as before."""
+    restrict = bool(run.cfg.get('restrict_to_exons'))
     samples_file = os.path.join(run.input_dir, 'samples.txt')
     with open(samples_file, 'w') as fh:
         fh.write(''.join(s + '\n' for s in samples))
@@ -301,11 +305,21 @@ def subset_vcfs(run, samples):
         same_dir = len({os.path.dirname(p) for p in paths}) <= 1
         for i, path in enumerate(paths):
             name = os.path.basename(path) if same_dir else '%04d-%s' % (i, os.path.basename(path))
-            jobs.append((path, [sys.executable, os.path.join(HERE, 'vcfcut.py'), path, os.path.join(out_dir, name),
-                                samples_file]))
+            dst = os.path.join(out_dir, name)
+            if restrict and path.endswith('.bcf'):
+                raise VerifyError('%s is BCF: --samples and --sample-list cut text VCF only. Convert the chunks to '
+                                  'bgzip-compressed VCF (bcftools view -Oz), or verify with every sample' % path)
+            if restrict and dst.endswith('.gz'):
+                # restrict_to_exons reads indexed chunks: cut to text, then bgzip and index
+                cmd = '%s %s %s %s %s && bgzip -f %s && tabix -f -p vcf %s' % tuple(shlex.quote(a) for a in (
+                    sys.executable, os.path.join(HERE, 'vcfcut.py'), path, dst[:-3], samples_file, dst[:-3], dst))
+                jobs.append((path, ['bash', '-c', 'set -euo pipefail; ' + cmd]))
+            else:
+                jobs.append((path, [sys.executable, os.path.join(HERE, 'vcfcut.py'), path, dst, samples_file]))
 
     def cut(job):
-        return job[0], subprocess.run(job[1], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return job[0], subprocess.run(job[1], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                      env=child_env())
     with concurrent.futures.ThreadPoolExecutor(max_workers=run.args.cores) as pool:
         failed = [(path, proc.stderr.strip()) for path, proc in pool.map(cut, jobs) if proc.returncode != 0]
     if failed:
@@ -388,6 +402,8 @@ def expected_outputs(cfg, refs):
     haplo = 'results/' + str(cfg['working_dir_name_haplo'])
     fasta_gz = '.gz' if str(cfg['haplo_fasta_file']).endswith('.gz') else ''
     for c in cfg['chromosomes']:
+        if cfg.get('restrict_to_exons'):
+            out.append(('data/vcf/phased/chr%s_exons.vcf.gz' % c, True))
         out.append(('data/vcf/phased/chr%s_phased_filtered.vcf.gz' % c, True))
         out.append(('%s/haplo_chr%s.tsv.gz' % (haplo, c), True))
         out.append(('%s/haplo_chr%s.fa%s' % (haplo, c, fasta_gz), True))
@@ -540,6 +556,11 @@ def main(argv=None):
             say('warning:', w)
         for n in notes:
             say('note:', n)
+        if cfg.get('restrict_to_exons'):
+            say('note: restrict_to_exons is on, so both arms read only the records that overlap an exon of a listed '
+                'transcript. Records whose ID is "." are named by their line number in the filtered VCF, so their '
+                'IDs differ from those of a run without the option (not between the arms). Set IDs first '
+                '(bcftools annotate --set-id) if results must match a run without it.')
 
         samples = select_samples(run)
         if samples is not None:

@@ -224,6 +224,42 @@ def test_subset_vcfs_keeps_every_record_and_chunk_names(tmp_path, monkeypatch):
     assert fast['phased_local_path'] + fast['phased_vcf_file_name'] == '../input/vcf/chr{chr}/*'
 
 
+@pytest.mark.skipif(shutil.which('bgzip', path=str(BIN)) is None and shutil.which('bgzip') is None,
+                    reason='needs bgzip and tabix')
+def test_subset_vcfs_with_restrict_to_exons_writes_indexed_chunks(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    gts = lambda k: ['%d|%d' % ((i + k) % 2, (i * k) % 2) for i in range(40)]
+    records = [(100, '.', gts(1)), (200, 'rs1', gts(2)), (300, '.', ['.|0'] * 40)]
+    text = vcf_text(SAMPLES, records)
+    plain = tmp_path / 'vcfs' / 'chr22.vcf'
+    write(plain, text)
+    subprocess.run(['bgzip', str(plain)], check=True, env=verify.child_env())
+    subprocess.run(['tabix', '-p', 'vcf', str(plain) + '.gz'], check=True, env=verify.child_env())
+    run = verify.Run(config(phased_vcf_file_name='chr{chr}*', chromosomes=['22'], restrict_to_exons=True),
+                     args(samples=7), str(tmp_path))
+    assert run.chunks == {'22': ['vcfs/chr22.vcf.gz']}            # the index is not a chunk
+    os.makedirs(run.input_dir)
+    verify.subset_vcfs(run, verify.select_samples(run))
+    out = Path(run.input_dir) / 'vcf' / 'chr22'
+    assert sorted(os.listdir(out)) == ['chr22.vcf.gz', 'chr22.vcf.gz.tbi']
+    lines = read(out / 'chr22.vcf.gz').split('\n')
+    assert len(lines) == len(text.split('\n')) and len(lines[-2].split('\t')) == 9 + 7
+    tabix = subprocess.run(['tabix', str(out / 'chr22.vcf.gz'), '22:200-200'], stdout=subprocess.PIPE, text=True,
+                           check=True, env=verify.child_env())
+    assert tabix.stdout.split('\t')[2] == 'rs1'
+
+
+def test_subset_vcfs_with_restrict_to_exons_refuses_bcf(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    write(tmp_path / 'vcfs' / 'chr22.vcf', vcf_text(SAMPLES, [(100, '.', ['0|1'] * 40)]))
+    (tmp_path / 'vcfs' / 'chr22.bcf').write_bytes(b'')
+    run = verify.Run(config(phased_vcf_file_name='chr{chr}.bcf', chromosomes=['22'], restrict_to_exons=True),
+                     args(samples=7), str(tmp_path))
+    os.makedirs(run.input_dir)
+    with pytest.raises(verify.VerifyError, match='BCF'):
+        verify.subset_vcfs(run, ['S01'])
+
+
 def test_subset_metadata_copies_lines(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     one_vcf(tmp_path)

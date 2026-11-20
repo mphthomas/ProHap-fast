@@ -106,6 +106,10 @@ not stop the run.
   keeps every line, so the IDs match those of a full run. Tools that drop or add lines (`bcftools view` with `-c`,
   `-i` or a region, and even `bcftools view -s`, which adds missing header definitions) change the IDs; set IDs
   first with `bcftools annotate --set-id` if you need them stable.
+- **`restrict_to_exons`** applies to both arms alike, and the exon-restricted VCF of each chromosome is compared too.
+  With it, records with ID `.` are named by their line among the exonic records, so their IDs differ from a run
+  without the option (not between the arms); `verify` says so before it runs. With `--samples` or `--sample-list`
+  the cut chunks are bgzip-compressed and indexed again; BCF chunks cannot be cut.
 - **Compare like with like.** The macOS build of pandas parses some 17-digit numbers differently from the Linux
   build, so output written on a Mac can differ from output written on Linux for large cohorts. `verify` runs both
   arms on the same machine, so its comparison is always valid; just do not compare a Mac run with a Linux run.
