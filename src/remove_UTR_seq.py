@@ -1,6 +1,12 @@
-from modules.common import read_fasta
+from modules.fallback import to_legacy
+from modules.fasta_stream import Accessions, records
 import argparse
 import gzip
+
+# ProHap-fast (IMPLEMENTATION_NOTES 8.3, D4): the reference (legacy/src/remove_UTR_seq.py) reads the whole FASTA
+# into a dict, then writes it; this writes each record as it is read. The dict would have replaced a record whose
+# accession repeats (merge_duplicate_seq.py, which writes this script's input, numbers its records, so they do not):
+# if one does, the reference runs instead and writes the output again.
 
 parser = argparse.ArgumentParser(description='Reads a FASTA file, removes entries only matching to UTR regions.')
 
@@ -12,11 +18,12 @@ parser.add_argument("-o", dest="output_file", required=True,
 
 args = parser.parse_args()
 
-all_proteins = read_fasta(args.input_file)
+accessions = Accessions()
 
-outfile = gzip.open(args.output_file, 'wt') if (args.output_file.endswith('.gz')) else open(args.output_file, 'w')
+outfile = gzip.open(args.output_file, 'wt', compresslevel=1) if (args.output_file.endswith('.gz')) else open(args.output_file, 'w')
 
-for protein in all_proteins.values():
+for element_id, protein in records(args.input_file):
+	accessions.add(element_id)
 	splitIDs = protein['description'].split('split_sequences:', 1)[1].split(maxsplit=1)[0].split(';')
 
 	# remove information for proteins that contain only their UTR region in this sequence
@@ -32,3 +39,6 @@ for protein in all_proteins.values():
 		outfile.write(protein['sequence'] + '\n')
 
 outfile.close()
+
+if accessions.repeated():
+	to_legacy(__file__, 'an accession repeats in ' + args.input_file)

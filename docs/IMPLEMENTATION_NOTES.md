@@ -780,3 +780,28 @@ compression and decompression (a quarter of the CPU) and overlaps the filter wit
 as long as `prohap.py` alone did (1.25× wall here, less than the design's 2×, which assumed the two steps took
 about as long). The filter's process adds about 0.3 GB.
 
+### 8.3 `merge_duplicate_seq.py` and `remove_UTR_seq.py` record by record (D4)
+
+Found while sizing 1.0.0: both scripts read the whole FASTA into a dict (`read_fasta`). On `bench/simulate_fasta.py
+--records 3000000` (1.06 GB gzipped), D3's `merge_duplicate_seq.py` peaked at 7.9 GB (2.6 GB per million records,
+so about 65 GB at the 25M records of 500,000 samples genome-wide), and the reference `remove_UTR_seq.py` at 3.5 GB on
+its output.
+
+- `src/modules/fasta_stream.py`: `records()` is `read_fasta`'s loop yielding (element ID, record) in file order;
+  `Accessions` keeps a 64-bit `hash()` of every element ID and says at the end whether one repeated. `read_fasta`'s
+  dict would have kept the last of such records in the place of the first, so a stream is exact only without
+  repeats (equal hashes of different IDs count as a repeat: safe, slower).
+- `merge_duplicate_seq.py`: the reference writes the merged entries in the order of `hash(sequence)`, numbered
+  `prot_<hex>` in that order. Each record, reduced to (hash, tag, accession, sequence and the four parsed fields), is
+  pickled (batches of 500, gzip level 1) into one of 128 temporary files in the output's directory by
+  `(hash + 2**63) * 128 >> 64`, so the files cover consecutive hash ranges and each keeps input order. Then file by
+  file: merge in a dict, sort by hash, write with the running entry number. A repeated accession: the run is redone
+  the D3 way, in memory.
+- `remove_UTR_seq.py`: each record is written as it is read; a repeated accession hands the run to the reference
+  (its input comes from `merge_duplicate_seq.py`, whose accessions are unique).
+
+At 3M records, identical output: `merge_duplicate_seq.py` 0.40 GB and 72 s (D3: 7.9 GB, 70 s), `remove_UTR_seq.py`
+0.11 GB and 16 s (reference: 3.5 GB, 17 s); at 25M records about 1 GB. Tests: `tests/test_fasta_stream.py`
+(`records` against `read_fasta` on odd files, both scripts against the reference with every header kind, a repeated
+accession, an empty file); the `dupseq` fixture runs both at 400,000 records.
+

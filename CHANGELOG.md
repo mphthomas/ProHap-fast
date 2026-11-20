@@ -25,6 +25,10 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   runs the filter as a separate process and reads its output through a pipe. That file is no longer written by the
   fast implementation, so `verify` no longer compares it. At 500,000 samples on the
   benchmark block this takes a quarter less CPU and a fifth less time.
+- **`merge_duplicate_seq.py` and `remove_UTR_seq.py` no longer hold the whole FASTA in memory; the output is the
+  same.** They read it record by record; `merge_duplicate_seq.py` sorts its entries through 128 temporary files in
+  the output's directory, one range of sequence hashes each. At 3 million records they need 0.4 and 0.1 GB instead
+  of 7.9 and 3.5 GB (at 500,000 samples genome-wide, about 1 GB instead of about 65 GB).
 
 ## [0.3.0] - 2026-11-19
 
