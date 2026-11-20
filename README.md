@@ -312,7 +312,10 @@ Pangenome Reference Consortium are on Zenodo:
   times the filter and `prohap.py` of each implementation on it (CPU, memory, phases).
 - `pytest tests/` runs the unit tests in under a minute (pytest: `pip install --no-deps --require-hashes -r
   envs/test.pip.lock`). With pre-built references, `tests/test_identity.py` also runs `verify` on the fixture.
-- CI (GitHub Actions): `unit` runs pytest on every push and pull request.
+- CI (GitHub Actions): `unit` runs pytest on every push and pull request; `identity` builds the image from the
+  commit and runs `verify` and `tests/legacy_vs_fast.sh` inside it, with the reference's outputs checked against
+  golden checksums (`tests/ci_identity.sh`): under Docker on the small tier for every push and pull request, under
+  Docker and Apptainer on the small and medium tiers nightly.
 - Design, measurements and the rebuild recipes for each speed-up:
   [docs/IMPLEMENTATION_NOTES.md](docs/IMPLEMENTATION_NOTES.md).
 

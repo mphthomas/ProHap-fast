@@ -109,6 +109,43 @@ reference proteome, `merge_duplicate_seq` and `fasta_simplify_headers` (about 5 
 
 ---
 
+## CI and the golden checksums
+
+Two GitHub Actions workflows, on GitHub-hosted `ubuntu-24.04` runners (free for this public repository):
+
+- `unit.yml`, every push to `main` and every pull request: `pytest tests/` in the locked environment, created by
+  `container/install_env.sh` with micromamba 1.5.10 (the image's), plus `envs/test.pip.lock` for pytest. No image,
+  no references; the tests that need references skip themselves. `fetch-depth: 0` for `test_legacy_frozen.py`.
+- `identity.yml`: builds the `linux/amd64` image from the commit with `build_image.sh`, its layers cached in GHCR
+  (`ghcr.io/<owner>/prohap-fast-buildcache`, `mode=max`, written by pushes, nightly and manual runs, read by pull
+  requests), then runs `tests/ci_identity.sh` twice inside it: `verify` through the entrypoint on a subset of the
+  1kG fixture (chromosomes 1 and 22, `--samples 300 --transcripts 30`), as the runner's user with the work directory
+  mounted at its own path; and `tests/legacy_vs_fast.sh -g` with `PROHAP_CODE=/opt/prohap`, the image's own code,
+  environment and references (fixtures and the script from the checkout). Docker with the small tier on every push
+  and pull request; Docker and Apptainer 1.5.5 (SIF from `docker-daemon:`) with the small and medium tiers nightly
+  and on `workflow_dispatch`, which also takes the tiers to run. The large tier stays a local release check: its
+  reference run on 26,000 samples needs about 12 GB of the runner's 16 (Morgan, 2026-11-20). Release images are not
+  built in CI; they are built on a workstation and pushed to Docker Hub (`mphthomas/prohap-fast`).
+
+`legacy_vs_fast.sh -g` checks the reference's outputs (the legacy arm, decompressed) against
+`tests/fixtures/expected.v113.sha256`, entries `<fixture>/<file>`; `-G` writes the entries of the fixtures that ran
+and keeps the others. Fast vs legacy cannot see a change that hits both arms (the Snakefile, the references, the
+environment); the golden checksums can. Both refuse to run off Linux: the macOS pandas wheel parses some floats
+differently (Pinned versions). The golden file was written with `-G small medium` in the `linux/amd64` 0.3.0 image
+under Rosetta on the Mac, with `PROHAP_CODE` pointing at this commit's checkout (the image's environment and
+references are those of this commit: `envs/`, `prebuild_refs.py` and `legacy/` did not change). 2026-11-20: 159 outputs
+over the 9 fixtures of the small and medium tiers, 33 min with `-j 4` under Rosetta; the fast arm of this commit
+(F2, F3, D4) was IDENTICAL on all of them on Linux.
+
+Running the image under Apptainer locally: Apptainer runs in a `--privileged` Ubuntu 24.04 container on Docker
+Desktop (PPA `apptainer/ppa`, arm64). As root it runs the SIF (kernel squashfs mount); as another user, the SIF's
+FUSE mount fails there (`exec ... failed: invalid argument`), so convert it to a sandbox first
+(`apptainer build --sandbox`). `APPTAINER_TMPDIR` must be on the container's own file system, not a bind mount from
+the Mac, and `docker-archive:` needs an uncompressed `docker save` tar (Apptainer 1.5.5 rejects a gzipped one with
+`gzip: invalid header`). (Found in M4, 2026-11-18, with the first version of this suite.)
+
+---
+
 ## 1. Quick wins on the legacy code (P1–P4, D3): exact, small
 
 Apply to a copy of `legacy/src` to make the first `src/`. All five were verified byte-identical. Rebuilt in M6

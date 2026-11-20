@@ -2,7 +2,7 @@
 # Run the reference code (legacy/src), then ProHap-fast (src/), on the same data, and check that every output file
 # is byte-identical. Every change to src/ must pass this.
 #
-#   tests/legacy_vs_fast.sh [-j CORES] [-k] [FIXTURE | TIER ...]
+#   tests/legacy_vs_fast.sh [-j CORES] [-k] [-g | -G] [FIXTURE | TIER ...]
 #
 #   FIXTURE  1kg/threshold0, 1kg/template   the 1000 Genomes sample data (tests/fixtures/1kg/README.md)
 #            sim/NAME                       simulated data with the config tests/fixtures/sim/NAME.yaml
@@ -13,6 +13,11 @@
 #            all      the three tiers
 #   -j       cores for each Snakemake run (default 8)
 #   -k       keep the work directory even when everything is identical
+#   -g       also check the reference's outputs against the golden checksums, tests/fixtures/expected.v113.sha256
+#            (Linux only). Fast vs legacy cannot see a change that hits both arms (the Snakefile, the references,
+#            the environment); the golden checksums can. CI runs this inside the image (tests/ci_identity.sh).
+#   -G       write the golden checksums of the fixtures that ran instead, keeping the others' (Linux only; only for
+#            a deliberate change: an output change with its CHANGELOG entry, a new release or a new fixture)
 #
 # Measured with -j 8 on an Apple Silicon Mac (0.2.0): small 4 minutes, medium 15, large 34 (28 of them the reference
 # on the 26,000-sample fixture); a fast run takes 15-35 s, mostly steps both arms share. tests/fixtures/sim/README.md
@@ -27,9 +32,14 @@
 # identical, 1 when one differs or a run fails; the work directory is then kept. A fast run in which a script handed
 # its input over to the reference code (src/modules/fallback.py) counts as failed: it would compare the reference
 # with itself.
+#
+# PROHAP_CODE, if set, is the directory whose Snakefile, src/ and legacy/src run (CI sets /opt/prohap, the image's
+# copy); the fixtures always come from this checkout.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+CODE=${PROHAP_CODE:-$ROOT}
+GOLDEN=$ROOT/tests/fixtures/expected.v113.sha256
 FALLBACK='ProHap-fast: falling back to the reference code'     # src/modules/fallback.py
 SMALL="1kg/threshold0 1kg/template sim/mix-threshold0 sim/mix-template"
 MEDIUM="sim/n2500 sim/n5000 sim/n10000 sim/whole22 dupseq"
@@ -37,13 +47,21 @@ LARGE="sim/n26000 sim/n100000 sim/ttn"
 
 cores=8
 keep=0
-while getopts j:kh opt; do
+golden=''
+while getopts j:kgGh opt; do
     case $opt in
         j) cores=$OPTARG ;;
         k) keep=1 ;;
-        *) sed -n '2,29p' "$0"; exit 2 ;;
+        g) golden=check ;;
+        G) golden=write ;;
+        *) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 2 ;;
     esac
 done
+if [ -n "$golden" ] && [ "$(uname -s)" != Linux ]; then
+    echo "-g and -G need Linux: the golden checksums come from the Linux images, and the macOS build of pandas" \
+         "parses some floats differently" >&2
+    exit 2
+fi
 shift $((OPTIND - 1))
 [ $# -gt 0 ] || set -- small
 fixtures=()
@@ -116,13 +134,13 @@ show_failure() {
 run_arm() {
     local fixture=$1 arm=$2 dir=$3 src
     if [ "$fixture" = dupseq ]; then
-        src=$ROOT/src
-        [ "$arm" = fast ] || src=$ROOT/legacy/src
+        src=$CODE/src
+        [ "$arm" = fast ] || src=$CODE/legacy/src
         (cd "$dir" && export PYTHONHASHSEED=0 PYTHONNOUSERSITE=1 &&
             python3 "$src/merge_duplicate_seq.py" -i input.fa.gz -o nodupl.fa.gz &&
             python3 "$src/remove_UTR_seq.py" -i nodupl.fa.gz -o final.fa)
     else
-        PYTHONHASHSEED=0 snakemake --snakefile "$ROOT/Snakefile" --directory "$dir" --cores "$cores" --notemp \
+        PYTHONHASHSEED=0 snakemake --snakefile "$CODE/Snakefile" --directory "$dir" --cores "$cores" --notemp \
             --config implementation="$arm"
     fi
 }
@@ -188,6 +206,10 @@ for fixture in "${fixtures[@]}"; do
             result=DIFFERENT
         fi
         printf '  %-10s %s\n' "$result" "$file"
+        if [ -n "$golden" ] && [ -f "$legacy/$file" ]; then
+            printf '%s  %s\n' "$(gzip -cdf "$legacy/$file" | sha256sum | cut -d ' ' -f 1)" "$fixture/$file" \
+                >> "$work/legacy.sha256"
+        fi
         if [ "$result" != IDENTICAL ]; then
             different=$((different + 1))
             if [ "$result" = DIFFERENT ]; then
@@ -199,9 +221,62 @@ for fixture in "${fixtures[@]}"; do
     done
 done
 
+# The golden checksums: tests/fixtures/expected.v113.sha256 holds "<sha256>  <fixture>/<file>" for the reference's
+# outputs; only the entries of the fixtures that ran are checked or written.
+golden_failed=0
+if [ -n "$golden" ] && [ $failed = 0 ] && [ $different = 0 ]; then
+    echo
+    if ! python3 - "$golden" "$GOLDEN" "$work/legacy.sha256" "${fixtures[@]}" <<'PYTHON'
+import os
+import sys
+
+mode, path, run_path, fixtures = sys.argv[1], sys.argv[2], sys.argv[3], set(sys.argv[4:])
+
+
+def read(p):
+    sums = {}
+    if os.path.exists(p):
+        for line in open(p):
+            if line.strip() and not line.startswith('#'):
+                digest, name = line.rstrip('\n').split('  ', 1)
+                sums[name] = digest
+    return sums
+
+
+ran = read(run_path)
+golden = read(path)
+mine = lambda name: any(name.startswith(f + '/') for f in fixtures)
+if mode == 'write':
+    merged = {k: v for k, v in golden.items() if not mine(k)}
+    merged.update(ran)
+    with open(path, 'w') as fh:
+        fh.write('# sha256 of the decompressed outputs of the reference (legacy arm) on the fixtures of\n'
+                 '# tests/legacy_vs_fast.sh, Ensembl release 113, written in the linux/amd64 image by\n'
+                 '# tests/ci_identity.sh --write-golden (legacy_vs_fast.sh -G). Checked by CI (-g). Linux only.\n')
+        for name in sorted(merged):
+            fh.write('%s  %s\n' % (merged[name], name))
+    print('Wrote %d golden checksums (%d of the fixtures that ran) to %s' % (len(merged), len(ran), path))
+    sys.exit(0)
+expected = {k: v for k, v in golden.items() if mine(k)}
+problems = ['%s: in the golden checksums, not written by this run' % k for k in sorted(set(expected) - set(ran))]
+problems += ['%s: written by this run, not in the golden checksums' % k for k in sorted(set(ran) - set(expected))]
+problems += ['%s: sha256 %s, golden %s' % (k, ran[k][:12], expected[k][:12])
+             for k in sorted(set(ran) & set(expected)) if ran[k] != expected[k]]
+if problems:
+    print('GOLDEN: the reference\'s outputs differ from %s:' % path)
+    for line in problems:
+        print('  ' + line)
+    sys.exit(1)
+print('GOLDEN: all %d outputs of the reference match the golden checksums.' % len(ran))
+PYTHON
+    then
+        golden_failed=1
+    fi
+fi
+
 echo
 elapsed=$((SECONDS - start_all))
-if [ $failed = 0 ] && [ $different = 0 ]; then
+if [ $failed = 0 ] && [ $different = 0 ] && [ $golden_failed = 0 ]; then
     printf 'IDENTICAL: all %d outputs of %d fixture(s), in %d min %d s.\n' $total ${#fixtures[@]} \
         $((elapsed / 60)) $((elapsed % 60))
     if [ $keep = 0 ]; then rm -rf "$work"; else echo "Kept $work"; fi
@@ -209,5 +284,6 @@ if [ $failed = 0 ] && [ $different = 0 ]; then
 fi
 [ $failed = 0 ] || echo 'A run FAILED or fell back to the reference code.'
 [ $different = 0 ] || echo "DIFFERENT: $different of $total outputs."
+[ $golden_failed = 0 ] || echo "Every output IDENTICAL, but the reference's outputs differ from the golden checksums."
 echo "Kept $work"
 exit 1
