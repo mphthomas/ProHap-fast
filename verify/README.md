@@ -12,7 +12,7 @@ it is the `verify` command, with the same mounts as a normal run (see the [READM
 ```bash
 cd /path/to/workdir
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":"$PWD" -w "$PWD" -v /data:/data:ro \
-    mphthomas/prohap-fast:0.3.0-ensembl.v113 verify --cores 8 --samples 2000 --transcripts 50
+    mphthomas/prohap-fast:1.0.0-ensembl.v113 verify --cores 8 --samples 2000 --transcripts 50
 singularity run --bind /data prohap-fast.sif verify --cores 8 --samples 2000 --transcripts 50
 ```
 

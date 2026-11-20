@@ -10,6 +10,8 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-20
+
 ### Added
 
 - **`restrict_to_exons`** (opt-in, default `False`): read only the VCF records that overlap an exon of a listed
@@ -23,8 +25,8 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 - **The fast implementation filters the VCF inside `prohap.py`; the output is the same.** The filter's output was
   written gzipped to `data/vcf/phased/chr<c>_phased_filtered.vcf.gz` and read back by `prohap.py`; now `prohap.py`
   runs the filter as a separate process and reads its output through a pipe. That file is no longer written by the
-  fast implementation, so `verify` no longer compares it. At 500,000 samples on the
-  benchmark block this takes a quarter less CPU and a fifth less time.
+  fast implementation, so `verify` no longer compares it. At 500,000 samples on the benchmark block this takes a
+  quarter less CPU and a fifth less time.
 - **`merge_duplicate_seq.py` and `remove_UTR_seq.py` no longer hold the whole FASTA in memory; the output is the
   same.** They read it record by record; `merge_duplicate_seq.py` sorts its entries through 128 temporary files in
   the output's directory, one range of sequence hashes each. At 3 million records they need 0.4 and 0.1 GB instead
@@ -154,7 +156,8 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   name ends in `.gz`: the table holds only the header line and the FASTA is empty. Names without `.gz` are written
   as before. As upstream, no cDNA FASTA is written for such a chromosome.
 
-[Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/mphthomas/ProHap-fast/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/mphthomas/ProHap-fast/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mphthomas/ProHap-fast/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mphthomas/ProHap-fast/compare/cafcc51...v0.1.0
