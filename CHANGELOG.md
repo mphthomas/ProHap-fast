@@ -10,6 +10,19 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-19
+
+### Changed
+
+- **The per-chromosome haplotype tables are merged without holding them in memory; the output is the same.**
+  `merge_tables.py` and `haplo_extract_sample_names.py` read the whole genome's haplotype table into pandas and wrote
+  it back, which at 500,000 samples would need well over 100 GB. They now read it in pandas' own chunks of 32,768
+  rows and let pandas re-type each chunk, so every value pandas rewrites (for example a frequency
+  `0.17837519623233908` written back as `0.178375196232339`) comes out as before; where pandas would join two chunks
+  by rewriting values (a column of whole numbers in one chunk and decimals in another), the step is handed to the
+  reference code. On simulated tables of 500,000 samples (1.1 GB of text) each step takes 10–16 CPU seconds instead
+  of 161–173, and stays at about 0.4 GB of memory on Linux however large the table.
+
 ## [0.2.0] - 2026-11-19
 
 ### Changed
@@ -114,6 +127,7 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
   name ends in `.gz`: the table holds only the header line and the FASTA is empty. Names without `.gz` are written
   as before. As upstream, no cDNA FASTA is written for such a chromosome.
 
-[Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/mphthomas/ProHap-fast/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mphthomas/ProHap-fast/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mphthomas/ProHap-fast/compare/cafcc51...v0.1.0
