@@ -18,3 +18,4 @@ verify_runs/
 tests/fixtures/sim/cache/
 bench/data/
 bench/results.tsv
+legacy_vs_fast_out/
