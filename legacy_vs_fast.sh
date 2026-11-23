@@ -33,34 +33,32 @@ prohap_args() {   # $1 = output directory given by prohap_args below
 }
 
 ### Comparison, only change is the legacy in path name.
+{ 
+    # Legacy
+    start=`date +%s`
+    python3 tools/run_fork.py legacy/src/vcf_filter_fix.py \
+    -i "$INPUT_DATA" -chr $CHR -af 0.01 -af_field AF \
+    -o "$OUT/out_legacy/filtered_chr${CHR}.vcf.gz"
+    prohap_args "$OUT/out_legacy"; python3 tools/run_fork.py legacy/src/prohap.py "${ARGS[@]}"
+    end=`date +%s`
+    legacy_runtime=$((end-start))
 
+    # Fast
+    start=`date +%s`
+    python3 tools/run_fork.py src/vcf_filter_fix.py \
+    -i "$INPUT_DATA" -chr $CHR -af 0.01 -af_field AF \
+    -o "$OUT/out_fast/filtered_chr${CHR}.vcf.gz"
+    prohap_args "$OUT/out_fast";   python3 tools/run_fork.py src/prohap.py "${ARGS[@]}"
+    end=`date +%s`
+    fast_runtime=$((end-start))
+    
+    # Compare outputs
+    for f in filtered_chr${CHR}.vcf.gz haplo_chr${CHR}.tsv.gz haplo_chr${CHR}.fa prohap_chr${CHR}.log; do
+    cmp <(gzip -dcf "$OUT/out_legacy/$f") <(gzip -dcf "$OUT/out_fast/$f") && echo "$f identical"
+    done
 
-
-
-
-# Legacy
-start=`date +%s`
-python3 tools/run_fork.py legacy/src/vcf_filter_fix.py \
-  -i "$INPUT_DATA" -chr $CHR -af 0.01 -af_field AF \
-  -o "$OUT/out_legacy/filtered_chr${CHR}.vcf.gz"
-prohap_args "$OUT/out_legacy"; python3 tools/run_fork.py legacy/src/prohap.py "${ARGS[@]}"
-end=`date +%s`
-legacy_runtime=$((end-start))
-
-# Fast
-start=`date +%s`
-python3 tools/run_fork.py src/vcf_filter_fix.py \
-  -i "$INPUT_DATA" -chr $CHR -af 0.01 -af_field AF \
-  -o "$OUT/out_fast/filtered_chr${CHR}.vcf.gz"
-prohap_args "$OUT/out_fast";   python3 tools/run_fork.py src/prohap.py "${ARGS[@]}"
-end=`date +%s`
-fast_runtime=$((end-start))
-
-# Compare outputs
-for f in filtered_chr${CHR}.vcf.gz haplo_chr${CHR}.tsv.gz haplo_chr${CHR}.fa prohap_chr${CHR}.log; do
-  cmp <(gzip -dcf "$OUT/out_legacy/$f") <(gzip -dcf "$OUT/out_fast/$f") && echo "$f identical"
-done
-
-echo "Legacy runtime: $legacy_runtime seconds"
-echo "Fast runtime: $fast_runtime seconds"
+    echo "Legacy runtime: $legacy_runtime second(s)"
+    echo "Fast runtime: $fast_runtime second(s)";
+    exit; 
+}
 
