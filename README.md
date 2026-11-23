@@ -1,5 +1,14 @@
 # ProHap-fast
 
+This repository is a fork of [ProHap](https://github.com/ProGenNo/ProHap). It was created with the intention of speeding up the computation for feasibility at biobank scale. This was done almost entirely through Claude Opus 5.5, whose coding ability far exceeds that of mine, and resulted in a >50x speed-up in less than a week of development, rather the month(s) it would've taken me. However, rather than blindly trust the product, I have manually built a [test](/Users/mthomas6/GitHub/ProHap-fast/legacy_vs_fast.sh) of the legacy ProHap code vs. this faster code. The test simply calls the two versions on the same data and arguments and measures that the output is byte identical. This is to ensure that the new code simply computes the same output as the previous implementation, but quicker, and can be run on your own data by changing the variables.
+
+Below is the output of running bench/bench.py on simulated data for chr22 on increasing sample sizes across legacy and the new fast implementation:
+
+![Legacy vs. Fast implementation speed and memory use.](./bench/results_cpu_memory.png)
+
+Along with this improvement, the codebase packages up the downloaded files and databases into the docker image on build. Whilst this infaltes the size of the image, it allows deployment in research environments with no or limited internet access.
+
+## Overview
 ProHap-fast builds protein haplotype databases for proteogenomics from phased genotypes, like
 [ProHap](https://github.com/ProGenNo/ProHap), of which it is a fork. It is meant for biobank cohorts: hundreds of
 thousands of phased whole-genome samples in one run, inside a Trusted Research Environment (TRE) with no network.
