@@ -11,8 +11,10 @@ from modules.gzip_writer import GzipWriter
 
 # ProHap-fast (IMPLEMENTATION_NOTES section 2): the same arguments, output and printed lines as the reference
 # (legacy/src/vcf_filter_fix.py), with the genotypes handled as bytes by numpy instead of one Python string per
-# sample. A line the fast path does not cover (FORMAT other than GT, genotypes other than one character per allele,
-# whitespace other than single tabs, ten or more ALT alleles) goes through the reference's own code for one line,
+# sample. FORMAT may carry more fields when GT is the first (GT:DS, GT:AD:DP:GQ); the reference keeps only the GT
+# subfield, and so does the fast path. A line the fast path does not cover (GT not the first FORMAT field, genotypes
+# other than one character per allele, whitespace other than single tabs, ten or more ALT alleles) goes through the
+# reference's own code for one line,
 # copied below. Any carriage return or non-ASCII byte hands the whole run to the reference, whose text-mode reading
 # treats those differently from bytes. The output is gzip level 1, compressed by a thread (the reference uses level
 # 9; the content is the same).
@@ -120,12 +122,14 @@ def reference_line(line, outfile):
 # ---------------------------------------------------------------------------------------------------------------
 # genotypes as bytes
 
-TAB, NL, PIPE, SLASH, ZERO = (ord(c) for c in '\t\n|/0')
+TAB, NL, PIPE, SLASH, ZERO, COLON = (ord(c) for c in '\t\n|/0:')
 REF_WORD = np.frombuffer(b'0|0\t', dtype='<u4')[0]
 IS_ALLELE = np.zeros(256, dtype=bool)               # one character per allele: a digit or '.'
 IS_ALLELE[[ord(c) for c in '0123456789.']] = True
 IS_SEP = np.zeros(256, dtype=bool)
 IS_SEP[[PIPE, SLASH]] = True
+IS_GT_END = np.zeros(256, dtype=bool)               # what ends the GT subfield of a token
+IS_GT_END[[COLON, TAB, NL]] = True
 # REMAP[j]: the reference's str.replace chain for ALT allele j (1-9) on one allele of a '|' genotype: j becomes 1, every
 # other non-zero digit 0; '0' and '.' stay
 REMAP = np.tile(np.arange(256, dtype=np.uint8), (10, 1))
@@ -155,11 +159,37 @@ def normalised_genotypes(line, start):
     starts = np.empty_like(ends)
     starts[0] = 0
     starts[1:] = ends[:-1] + 1
-    lengths = ends - starts
+    return _tokens(a, starts, ends - starts)
+
+
+def first_subfield_genotypes(line, start):
+    """normalised_genotypes for a FORMAT whose first field is GT, followed by others (GT:DS, ...): the reference
+    writes `token.split(':')[0]` of each token, normalised the same way. None when a separator is anything but a
+    single tab (the reference splits on any whitespace; any byte below '!' other than the tabs and the final newline
+    counts), a token is empty, or a GT subfield is anything but one character per allele."""
+    a = np.frombuffer(line, dtype=np.uint8, offset=start)
+    ends = np.flatnonzero(a < 33)
+    if len(ends) == 0 or ends[-1] != len(a) - 1 or a[-1] != NL or not (a[ends[:-1]] == TAB).all():
+        return None
+    starts = np.empty_like(ends)
+    starts[0] = 0
+    starts[1:] = ends[:-1] + 1
+    if not (ends > starts).all():
+        return None
+    # the GT subfield ends at the token's first ':' or with the token: one character long when the byte after its
+    # first is a terminator, three when the fourth is (_tokens checks the two in between)
+    last = len(a) - 1
+    lengths = np.where(IS_GT_END[a[starts + 1]], 1, np.where(IS_GT_END[a[np.minimum(starts + 3, last)]], 3, 0))
+    return _tokens(a, starts, lengths)
+
+
+def _tokens(a, starts, lengths):
+    """The reference's genotype tokens from the GT text a[starts[k]:starts[k] + lengths[k]] of each sample k: 'a|b'
+    or 'a/b' as it is, 'a' written 'a|0'; None when one is anything else."""
     diploid = lengths == 3
     if not (diploid | (lengths == 1)).all():
         return None
-    out = np.empty((len(ends), 4), dtype=np.uint8)
+    out = np.empty((len(starts), 4), dtype=np.uint8)
     out[:, 0] = a[starts]
     out[:, 1] = np.where(diploid, a[np.minimum(starts + 1, len(a) - 1)], PIPE)
     out[:, 2] = np.where(diploid, a[np.minimum(starts + 2, len(a) - 1)], ZERO)
@@ -195,7 +225,11 @@ def fast_line(line, outfile):
     if len(head.split()) != 9 or head.count('\t') != 8:
         return None
     fields = head.split('\t')
-    if fields[8] != 'GT':
+    if fields[8] == 'GT':
+        genotypes_of = normalised_genotypes
+    elif fields[8].startswith('GT:'):
+        genotypes_of = first_subfield_genotypes        # the reference keeps the GT subfield only
+    else:
         return None
     ALT = fields[4]
     INFO = fields[7]
@@ -206,10 +240,10 @@ def fast_line(line, outfile):
     if ',' not in ALT:
         allele_maf = float(MAF)
         if allele_maf >= args.min_af:
-            genotypes = normalised_genotypes(line, tabs[8] + 1)
+            genotypes = genotypes_of(line, tabs[8] + 1)
             if genotypes is None:
                 return None
-            if len(genotypes) == len(line) - tabs[8] - 1:
+            if fields[8] == 'GT' and len(genotypes) == len(line) - tabs[8] - 1:
                 outfile.write(line)                    # FORMAT is GT and nothing to normalise: the line as it is
             else:
                 outfile.write(line[:tabs[7]] + b'\tGT\t' + genotypes)
@@ -228,7 +262,7 @@ def fast_line(line, outfile):
             allele_maf = 0
         if allele_maf >= args.min_af:
             if genotypes is None:
-                genotypes = normalised_genotypes(line, tabs[8] + 1)
+                genotypes = genotypes_of(line, tabs[8] + 1)
                 if genotypes is None:
                     return None
             lines.append(('\t'.join(fields[:4] + [allele] + fields[5:7]) + '\tMAF=' + str(allele_maf)

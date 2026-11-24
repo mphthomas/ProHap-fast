@@ -92,7 +92,7 @@ reference against itself, and the step runs at the reference's speed.
 ## Checks before the runs
 
 `verify` reads the header and the first 1,000 records (at most 256 MB) of every VCF chunk and warns about input that ProHap mishandles
-or that ProHap-fast hands to the reference code: unphased genotypes, FORMAT fields other than GT, alleles written
+or that ProHap-fast hands to the reference code: unphased genotypes, FORMAT fields before GT, alleles written
 with more than one character, sample names that are numbers (pandas reads them as numbers in the metadata, and the
 samples are dropped), samples missing from `sample_metadata_file`, chunks with different sample lists, and chunks
 out of order or overlapping (checked in full only for chunks read to the end or indexed with tabix). The warnings do

@@ -34,7 +34,7 @@ class Chunk:
         self.first_pos = None
         self.last_pos = None        # last scanned position (the file's last one only when eof)
         self.unsorted = 0
-        self.extra_format = 0       # FORMAT other than GT
+        self.gt_not_first = 0       # FORMAT with GT, but not as the first field
         self.no_gt = 0
         self.unphased = 0           # a genotype with '/'
         self.multi_char = 0         # an allele written with more than one character
@@ -102,10 +102,12 @@ def scan(path, max_records=None, max_bytes=None):
             if b'GT' not in fmt:
                 chunk.no_gt += 1
                 continue
-            if fmt != [b'GT']:
-                chunk.extra_format += 1
+            if fmt[0] != b'GT':
+                chunk.gt_not_first += 1
                 continue
             gts = fields[9]
+            if len(fmt) > 1:            # GT:DS, ...: the filter keeps the GT subfield of each token
+                gts = b'\t'.join(token.split(b':', 1)[0] for token in gts.split(b'\t'))
             if b'/' in gts:
                 chunk.unphased += 1
             if _MULTI_CHAR.search(gts):
@@ -169,10 +171,11 @@ def check(chunks_by_chrom, metadata_names, tabix=None):
                 continue
             if c.no_gt:
                 warnings.append('%s: %d records%s have no GT in FORMAT' % (name, c.no_gt, sampled))
-            if c.extra_format:
-                warnings.append('%s: %d records%s have FORMAT fields other than GT. ProHap reads only GT, and the '
-                                'fast implementation runs the legacy code on such files; keep only GT '
-                                '(bcftools annotate -x ^FORMAT/GT) for speed' % (name, c.extra_format, sampled))
+            if c.gt_not_first:
+                warnings.append('%s: %d records%s have FORMAT fields before GT. ProHap reads only GT; the fast filter '
+                                'runs the legacy code on each such record, at the legacy speed. Put GT first, or keep '
+                                'only GT (bcftools annotate --no-version -x ^FORMAT/GT; this removes header lines, '
+                                'which renumbers records with ID ".")' % (name, c.gt_not_first, sampled))
             if c.unphased:
                 warnings.append('%s: %d records%s have unphased genotypes (/). ProHap needs phased genotypes (|)'
                                 % (name, c.unphased, sampled))

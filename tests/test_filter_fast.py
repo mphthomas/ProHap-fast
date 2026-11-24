@@ -113,10 +113,46 @@ def test_no_input_files(tmp_path):
     check(run_both(tmp_path, tmp_path / 'none*.vcf'))
 
 
+@pytest.mark.parametrize('af', ['0', '0.05'])
+def test_format_fields_after_gt(tmp_path, af):
+    """FORMAT with GT first and more fields (GT:DS, GT:AD:DP:GQ, GT:): the reference keeps the GT subfield of each
+    token; so does the fast path. Includes trailing fields left out, whole-token '.', haploid tokens, unphased and
+    missing genotypes, multi-allelic lines, and tokens the fast path leaves to the reference's code (an empty GT
+    subfield, a multi-character allele, a space inside a later field)."""
+    rng = random.Random(9)
+    formats = {
+        'GT:DS': lambda g: g + ':' + rng.choice(['0.5', '1.998', '0', '.']),
+        'GT:AD:DP:GQ': lambda g: '%s:%d,%d:%d:%d' % (g, rng.randint(0, 30), rng.randint(0, 30), rng.randint(0, 60),
+                                                     rng.randint(0, 99)),
+        'GT:': lambda g: g + ':',
+        'GT:DS:GP': lambda g: rng.choice([g, g + ':0.1', g + ':0.1:0.9,0.1,0']),        # trailing fields dropped
+    }
+    records = []
+    for i in range(60):
+        fmt = rng.choice(list(formats))
+        alt = rng.choice(['G', 'GT', 'C,G', 'A,C,T'])
+        n_alt = alt.count(',') + 1
+        tokens = [formats[fmt](rng.choice(['0|0', '0|0', '0|1', '1|0', '%d|%d' % (rng.randint(0, n_alt), n_alt),
+                                           '1', '0', '.', '.|.', '0/1', './.']))
+                  for _ in SAMPLES]
+        if i % 7 == 0:
+            tokens[rng.randrange(len(tokens))] = '.'                                    # the whole token missing
+        if i % 11 == 0:
+            tokens[rng.randrange(len(tokens))] = rng.choice([':0.5', '10|0:0.5', '0|1:a b'])
+        afs = ','.join(str(round(rng.random() / 5, 3)) for _ in range(n_alt))
+        records.append((100 + i * 10, rng.choice(['.', 'rs%d' % i]), 'A', alt, 'AC=1;AF=' + afs, fmt, tokens))
+    records.append((900, '.', 'A', 'G', 'AF=0.1', 'GT:DS', ['0|0:0'] * 10))                # all REF
+    records.append((910, '.', 'A', 'G', 'AF=0.1', 'GT:DS', ['0|1'] * 10))                  # no DS anywhere
+    write(tmp_path / 'in.vcf.gz', vcf(SAMPLES, records))
+    out = check(run_both(tmp_path, tmp_path / 'in.vcf.gz', af))
+    assert 'GT:' not in out and '\tGT\t' in out
+
+
 @pytest.mark.parametrize('case', ['extra_format', 'format_gt_second', 'spaces', 'multichar_allele', 'ten_alleles',
                                   'trailing_tab', 'double_tab', 'odd_separator', 'missing_genotypes'])
 def test_lines_for_the_reference_code(tmp_path, case):
-    """Lines outside the fast path go through the reference's own code for that line; no fallback."""
+    """Lines outside the fast path go through the reference's own code for that line; no fallback. ('extra_format',
+    GT:DS, is on the fast path since GT comes first; kept here as a multi-allelic line among GT ones.)"""
     rng = random.Random(4)
     good = [(100 + i, '.', 'A', 'G', 'AF=0.2', 'GT', random_genotypes(rng, 10)) for i in range(3)]
     text = vcf(SAMPLES, good)

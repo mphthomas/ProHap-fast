@@ -247,7 +247,14 @@ choices:
   zlib compresses this text twice as fast as macOS's `/usr/bin/gzip -1`).
 - A biallelic line with FORMAT `GT` whose tokens are all `a|b` or `a/b` is written as it was read: the reference's
   output for it is the line itself.
-- Up to nine ALT alleles on the fast path; lines outside it (FORMAT other than `GT`, other tokens, other whitespace,
+- FORMAT with `GT` first and more fields (`GT:DS`, ...; added after 1.0.0): the reference writes
+  `token.split(':')[0]` of each token, so the fast path cuts each token at its first `:` (`first_subfield_genotypes`:
+  the GT subfield is one byte long when the byte after its first is `:`, tab or newline, three when the fourth is)
+  and normalises as for `GT`. Any byte below `!` other than the tabs and the final newline sends the line to
+  `reference_line`, since the reference splits on any whitespace, also inside later fields. Measured on 1,000
+  records × 26,000 samples of `GT:DS` (260 MB, plain text): 0.52 CPU-s, against 2.05 through `reference_line`, 7.6
+  for the reference script and 0.17 for the same records as `GT` alone.
+- Up to nine ALT alleles on the fast path; lines outside it (FORMAT not starting with `GT`, other tokens, other whitespace,
   ten or more alleles) go through the reference's loop body for one line, copied into the script as
   `reference_line`. A carriage return or non-ASCII byte anywhere hands the whole run to the reference.
 - `<file> is empty!` is printed at the end, before the counts, so stdout is the reference's even when a later file

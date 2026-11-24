@@ -165,9 +165,9 @@ of samples. Details, and what each check covers: [verify/README.md](verify/READM
   `restrict_to_exons` (below). Records sorted by position.
 - **Chunks** are read in alphabetical order and only the first header is kept, so their names must sort in genomic
   order, they must not overlap, and every chunk must list the same samples in the same order.
-- **Genotypes**: `FORMAT` is `GT` alone, phased, one character per allele (`0|1`, `.|0`, haploid `1` for chrX in
+- **Genotypes**: `FORMAT` is `GT`, or starts with `GT` (`GT:DS`, `GT:AD:DP:GQ`; ProHap reads only `GT`), phased, one character per allele (`0|1`, `.|0`, haploid `1` for chrX in
   males). This is what the fast implementation is built for; input outside it (unphased or multi-character
-  genotypes, other FORMAT fields, quotes, CR or non-ASCII bytes, duplicate sample or transcript IDs) is processed by
+  genotypes, FORMAT fields before `GT`, quotes, CR or non-ASCII bytes, duplicate sample or transcript IDs) is processed by
   the reference code, at the reference's speed, never guessed at.
 - **Sample IDs must not be purely numeric**: pandas reads them as numbers from the metadata, and every sample is
   dropped without an error.

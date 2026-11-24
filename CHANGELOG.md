@@ -10,6 +10,14 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 
 ## [Unreleased]
 
+### Changed
+
+- **The fast filter handles FORMAT fields after `GT` (`GT:DS`, `GT:AD:DP:GQ`); the output is the same.** The
+  filter writes only `GT`, and records with more FORMAT fields went through the reference's code one record at a
+  time. When `GT` is the first field, the fast filter now keeps the GT subfield of each sample with numpy: on
+  1,000 `GT:DS` records at 26,000 samples, 0.5 CPU-s instead of 2.1 (7.6 for the reference script). Records with
+  fields before `GT` still go through the reference's code. `verify` warns only about those now.
+
 ## [1.0.0] - 2026-11-20
 
 ### Added

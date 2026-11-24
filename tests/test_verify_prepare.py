@@ -302,7 +302,9 @@ def test_preflight_clean_input(tmp_path):
 
 
 @pytest.mark.parametrize('record,message', [
-    ('22\t100\trs1\tA\tG\t.\tPASS\t.\tGT:DS\t0|1:1\t0|0:0\n', 'FORMAT fields other than GT'),
+    ('22\t100\trs1\tA\tG\t.\tPASS\t.\tDS:GT\t1:0|1\t0:0|0\n', 'FORMAT fields before GT'),
+    ('22\t100\trs1\tA\tG\t.\tPASS\t.\tGT:DS\t0/1:1\t0|0:0\n', 'unphased'),
+    ('22\t100\trs1\tA\tG\t.\tPASS\t.\tGT:DS\t10|1:1\t0|0:0\n', 'more than one character'),
     ('22\t100\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\t0|0\n', 'unphased'),
     ('22\t100\trs1\tA\tG\t.\tPASS\t.\tGT\t10|1\t0|0\n', 'more than one character'),
     ('22\t100\trs1\tA\tG\t.\tPASS\t.\tGT\t0|1\t0|0\r\n', 'characters other than'),
@@ -311,6 +313,13 @@ def test_preflight_clean_input(tmp_path):
 def test_preflight_genotype_warnings(tmp_path, record, message):
     w, _ = check(tmp_path, [('a.vcf', vcf_text(['A', 'B'], [record]))])
     assert len(w) == 1 and message in w[0]
+
+
+def test_preflight_gt_first_is_clean(tmp_path):
+    """More FORMAT fields after GT need no warning: the fast filter keeps the GT subfield."""
+    record = '22\t100\trs1\tA\tG\t.\tPASS\t.\tGT:AD:DP\t0|1:3,4:7\t1:5,0:5\n'
+    w, _ = check(tmp_path, [('a.vcf', vcf_text(['A', 'B'], [record]))])
+    assert w == []
 
 
 def test_preflight_samples(tmp_path):
