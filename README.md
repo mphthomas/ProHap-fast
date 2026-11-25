@@ -26,7 +26,7 @@ thousands of phased whole-genome samples in one run, inside a Trusted Research E
   and the tagged contaminants.
 - **Docker or Singularity/Apptainer**, as any user.
 
-**Status: 1.0.0.** `src/`, the fast implementation, rewrites every step whose cost grows with the cohort and keeps the
+**Status: 1.1.0.** `src/`, the fast implementation, rewrites every step whose cost grows with the cohort and keeps the
 output byte-identical. The VCF filter and `prohap.py`, now one step, grow linearly with the number of samples: on 60
 simulated transcripts (a 315th of the exome) they take about 10 CPU seconds at 26,000 samples, where ProHap takes
 2,644, and about 230 CPU seconds with at most 4 GB of memory at 500,000 samples, which ProHap cannot run. Every
@@ -57,7 +57,7 @@ Ensembl release 113 from Docker Hub (about 9 GB; or [build it](#building-the-ima
 
 ```bash
 git clone https://github.com/mphthomas/ProHap-fast.git && cd ProHap-fast
-IMAGE=mphthomas/prohap-fast:1.0.0-ensembl.v113
+IMAGE=mphthomas/prohap-fast:1.1.0-ensembl.v113
 docker pull $IMAGE
 
 tar -xzf sample_data/sample_1kGP_common_global.tar.gz -C sample_data
@@ -72,7 +72,7 @@ The database is `results/example1_concatenated_database_simplified.fasta`, with 
 ## Images and Ensembl releases
 
 An image holds one Ensembl release and is tagged with it: `prohap-fast:<version>-ensembl.v<release>`, for example
-`prohap-fast:1.0.0-ensembl.v113` is ProHap-fast 1.0.0 with the references of Ensembl release 113 (GRCh38). The
+`prohap-fast:1.1.0-ensembl.v113` is ProHap-fast 1.1.0 with the references of Ensembl release 113 (GRCh38). The
 release is also in the image's environment (`ENSEMBL_RELEASE`) and labels (`io.prohap.ensembl_release`, with the
 version, commit and build date in the `org.opencontainers.image.*` labels).
 
@@ -105,7 +105,7 @@ docker run --rm -u "$(id -u):$(id -g)" \
     -v "$PWD":"$PWD" -w "$PWD" \
     -v /data/phased_vcfs:/data/phased_vcfs:ro \
     -v /results/prohap:/results/prohap \
-    mphthomas/prohap-fast:1.0.0-ensembl.v113 --cores 16 -p
+    mphthomas/prohap-fast:1.1.0-ensembl.v113 --cores 16 -p
 ```
 
 - Mount every path `config.yaml` refers to (VCFs, sample metadata, outputs) at the same path inside the container,
@@ -130,7 +130,7 @@ The same image runs under Singularity and Apptainer, which mount the current dir
 being asked:
 
 ```bash
-singularity build prohap-fast.sif docker://mphthomas/prohap-fast:1.0.0-ensembl.v113   # or docker-archive:FILE.tar
+singularity build prohap-fast.sif docker://mphthomas/prohap-fast:1.1.0-ensembl.v113   # or docker-archive:FILE.tar
 cd /path/to/workdir                       # contains config.yaml
 singularity run --bind /data/phased_vcfs,/results/prohap prohap-fast.sif --cores 16 -p
 singularity run --bind /data/phased_vcfs prohap-fast.sif verify --cores 8 --chromosomes 21,22 --transcripts 20
@@ -153,7 +153,7 @@ change the output on purpose, so they are checked by tests instead.
 
 ```bash
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":"$PWD" -w "$PWD" -v /data:/data:ro \
-    mphthomas/prohap-fast:1.0.0-ensembl.v113 verify --cores 8 --chromosomes 21,22 --samples 2000 --transcripts 50
+    mphthomas/prohap-fast:1.1.0-ensembl.v113 verify --cores 8 --chromosomes 21,22 --samples 2000 --transcripts 50
 ```
 
 The reference is slow at cohort scale (about 2,000 CPU seconds per 60 transcripts at 26,000 samples), so restrict
@@ -229,7 +229,7 @@ transcript, alone); at 26,000 samples about 10 CPU seconds and under 1 GB.
 For 500,000 samples, every chromosome at once:
 
 ```bash
-docker run ... mphthomas/prohap-fast:1.0.0-ensembl.v113 --cores 96 --resources mem_mb=250000 -p
+docker run ... mphthomas/prohap-fast:1.1.0-ensembl.v113 --cores 96 --resources mem_mb=250000 -p
 ```
 
 | Resource | 500,000 samples | Notes |
