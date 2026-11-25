@@ -1,6 +1,8 @@
 """src/prohap.py (R1c) against legacy/src/prohap.py, as scripts, on a crafted chromosome (a gffutils DB built from a
 GTF, a cDNA FASTA, sample metadata and a VCF; see fast_cases.make_protein_case): identical outputs with the fast path
-taken, and identical outputs (or both runs stopping) for every input that hands the run to the reference.
+taken, and identical outputs (or both runs stopping) for every input that hands the run to the reference. The fast
+script runs with -fix_bugs 0 (the reference's output) unless a test says otherwise; with -fix_bugs 1 it cannot hand
+input to the reference, which has none of the fixes, and stops instead.
 
     pytest tests/test_prohap_fast.py
 """
@@ -65,7 +67,7 @@ def write_case(path, seed=1, vcf_edit=None, metadata_edit=None, list_edit=None, 
     return vcf
 
 
-def run(arm, case, vcf, extra=(), threads=2, chromosome='22', vcf_args=None, name=None, env=None):
+def run(arm, case, vcf, extra=(), threads=2, chromosome='22', vcf_args=None, name=None, env=None, fix_bugs='0'):
     out = case / (name or arm)
     out.mkdir()
     (out / 'tmp').mkdir()
@@ -75,7 +77,8 @@ def run(arm, case, vcf, extra=(), threads=2, chromosome='22', vcf_args=None, nam
                str(case / 'cdna.fa'), '-s', str(case / 'samples.tsv'), '-chr', chromosome, '-min_hap_freq', '-1',
                '-min_hap_count', '0', '-acc_prefix', 'enshap_22', '-id_prefix', 'haplo_chr22', '-threads',
                str(threads), '-log', 'prohap.log', '-tmp_dir', 'tmp', '-output_csv', 'haplo.tsv.gz', '-output_fasta',
-               'haplo.fa', '-output_cdna_fasta', 'cdna.fa'] + list(extra)
+               'haplo.fa', '-output_cdna_fasta', 'cdna.fa'] + list(extra) + \
+        (['-fix_bugs', fix_bugs] if arm == 'fast' and fix_bugs is not None else [])
     proc = subprocess.run(command, cwd=out, capture_output=True, text=True,
                           env=dict(os.environ, PYTHONHASHSEED='0', PYTHONNOUSERSITE='1', **(env or {})))
     files = {}
@@ -286,3 +289,35 @@ def test_i_or_filter_glob():
                           capture_output=True, text=True)
     assert proc.returncode == 2 and 'either -i or -filter_glob' in proc.stderr
 
+
+
+# ------------------------------------ -fix_bugs 1 and input for the reference ------------------------------------
+
+@pytest.mark.parametrize('fused', [False, True])
+def test_fix_bugs_on_does_not_fall_back(tmp_path, fused):
+    """Input that -fix_bugs 0 hands to the reference stops the run with -fix_bugs 1 (exit status 3, no output)."""
+    case = tmp_path / 'case'
+    case.mkdir()
+    vcf = write_case(case, seed=2, vcf_edit=lambda t: t.replace('\n', '\r\n'))
+    vcf_args = ['-filter_glob', str(vcf), '-filter_af', '0', '-filter_af_field', 'AF'] if fused else None
+    proc, files = run('fast', case, vcf, NO_UTR, vcf_args=vcf_args, fix_bugs='1')
+    assert proc.returncode == 3, proc.stderr
+    assert FALLBACK not in proc.stderr
+    assert 'this input needs the reference code' in proc.stderr and 'fix_bugs: false' in proc.stderr
+    assert 'haplo.tsv.gz' not in files and 'haplo.fa' not in files
+
+
+def test_fix_bugs_default_is_on(tmp_path):
+    """Without -fix_bugs the fixes apply: the same input stops the run as with -fix_bugs 1."""
+    case = tmp_path / 'case'
+    case.mkdir()
+    vcf = write_case(case, seed=2, vcf_edit=edit_token('0|0', '0/1'))
+    proc, _ = run('fast', case, vcf, NO_UTR, fix_bugs=None)
+    assert proc.returncode == 3 and 'fix_bugs: false' in proc.stderr, proc.stderr
+
+
+def test_fix_bugs_value(tmp_path):
+    proc = subprocess.run([sys.executable, str(TREES['fast'] / 'prohap.py'), '-i', __file__, '-db', 'x',
+                           '-transcripts', 'x', '-cdna', 'x', '-s', 'x', '-chr', '22', '-output_csv', 'x',
+                           '-output_fasta', 'x', '-fix_bugs', '2'], capture_output=True, text=True)
+    assert proc.returncode == 2 and '-fix_bugs' in proc.stderr

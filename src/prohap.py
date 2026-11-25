@@ -29,12 +29,13 @@ from numpy import int64
 from pandas.io.common import infer_compression
 
 from modules.cdna import read_sequences
-from modules.fallback import Unsupported, to_legacy
+from modules.fallback import Unsupported, cannot_fall_back, to_legacy
 from modules.fused import FilterReader, to_legacy_fused
 from modules.legacy_import import legacy
 from modules.pandas_emulation import emulate_id_column, pandas_chunk_rows
 from modules.sweep import FIXED_COLUMNS, RecordParser, VCFReader, assign_records, exon_index, read_header
 from modules.haplotypes import Cohort, transcript_rows
+from modules.fixes import selected as selected_fixes
 from modules.proteins import Settings, Transcript, process_transcript
 
 check_open_file = legacy.common.check_open_file
@@ -127,6 +128,10 @@ parser.add_argument("-output_fasta", dest="output_fasta", required=True,
 parser.add_argument("-output_cdna_fasta", dest="output_cdna_fasta", required=False, default="",
                     help="output cDNA FASTA file (optional; default: none)")
 
+parser.add_argument("-fix_bugs", dest="fix_bugs", required=False, type=int, choices=(0, 1), default=1,
+                    help="ProHap-fast: 1 applies the fixes of the reference's haplotype bugs (IMPLEMENTATION_NOTES "
+                         "section 9), 0 writes the reference's output byte for byte; default: 1")
+
 TSV_BATCH_ROWS = 20000          # rows per DataFrame.to_csv call; every column has one type, whatever the batch
 IN_FLIGHT_PER_WORKER = 4        # transcripts handed to the workers and not yet back, per worker
 
@@ -137,6 +142,20 @@ SETTINGS = None
 CHUNK_ROWS = None
 
 
+def without_fix_bugs(argv):
+    """argv without -fix_bugs and its value, which the reference does not take."""
+    out = []
+    skip = False
+    for arg in argv:
+        if skip:
+            skip = False
+        elif arg == '-fix_bugs':
+            skip = True
+        elif not arg.startswith('-fix_bugs='):
+            out.append(arg)
+    return out
+
+
 def haplotypes_of_transcript(index, records):
     """Worker: get_haplotypes, then process_transcript_haplotypes, for one transcript with at least one record.
     Returns ('ok', index, number of table rows, number of removed copies, removed samples, result rows, protein
@@ -145,7 +164,7 @@ def haplotypes_of_transcript(index, records):
     try:
         ids = emulate_id_column([r[2] for r in records], CHUNK_ROWS)
         autosomal = COHORT.is_autosomal(t.start, t.end)
-        rows, removed = transcript_rows(records, ids, autosomal, COHORT)
+        rows, removed = transcript_rows(records, ids, autosomal, COHORT, SETTINGS.fixes)
         table, proteins, cdnas = process_transcript(t, list(enumerate(rows)), SETTINGS, COHORT)
         labels = COHORT.labels
         removed_text = ';'.join([labels[c] for c in removed.tolist()])
@@ -325,7 +344,7 @@ def run(args):
         record_parser = RecordParser(len(columns) - 9, [rank.get(name, -1) for name in columns[9:]])
         CHUNK_ROWS = pandas_chunk_rows(len(columns))
         SETTINGS = Settings(args.chromosome, args.force_rf, args.min_freq, args.min_hap_count, args.ignore_UTR,
-                            args.skip_start_lost, len(args.output_cdna_fasta) > 0)
+                            args.skip_start_lost, len(args.output_cdna_fasta) > 0, selected_fixes(args.fix_bugs))
 
         print (('Chr ' + args.chromosome + ':'), "Reading", args.cdnas_fasta)
         cdnas = read_sequences(args.cdnas_fasta, set(ids))
@@ -411,9 +430,13 @@ def run(args):
             state['reader'].close()
         if state['outputs'] is not None:
             state['outputs'].discard()
+        if args.fix_bugs:
+            # the reference has none of the fixes: its output would be that of -fix_bugs 0
+            cannot_fall_back(__file__, str(e))
+        argv = without_fix_bugs(sys.argv[1:])
         if fused:
-            to_legacy_fused(__file__, args, str(e))
-        to_legacy(__file__, str(e))
+            to_legacy_fused(__file__, args, str(e), argv)
+        to_legacy(__file__, str(e), argv)
     except BaseException:
         if state['pool'] is not None:
             state['pool'].terminate()

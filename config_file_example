@@ -3,7 +3,12 @@
 
 # ---------------- Global parameters ----------------
 
-implementation: fast    # fast (src/) or legacy (legacy/src, the frozen reference); both write the same output. Default: fast
+implementation: fast    # fast (src/) or legacy (legacy/src, the frozen reference); with fix_bugs: false both write the same output. Default: fast
+
+# True: the fast implementation fixes bugs of the reference's haplotype step that lose haplotypes or variants (the
+# CHANGELOG's "Output changes with fix_bugs" lists them). False: it writes the reference's output byte for byte, which
+# is what `verify` checks. implementation: legacy has none of the fixes and needs false. Default: true
+fix_bugs: true
 
 # The Ensembl release (GRCh38) of the references, and the only release setting: the annotation and the reference
 # transcript list follow from it. It must be the release of the image (prohap-fast:<version>-ensembl.v113 carries

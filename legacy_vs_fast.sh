@@ -48,7 +48,7 @@ prohap_args() {   # $1 = output directory given by prohap_args below
     python3 tools/run_fork.py src/vcf_filter_fix.py \
     -i "$INPUT_DATA" -chr $CHR -af 0.01 -af_field AF \
     -o "$OUT/out_fast/filtered_chr${CHR}.vcf.gz"
-    prohap_args "$OUT/out_fast";   python3 tools/run_fork.py src/prohap.py "${ARGS[@]}"
+    prohap_args "$OUT/out_fast";   python3 tools/run_fork.py src/prohap.py -fix_bugs 0 "${ARGS[@]}"
     end=`date +%s`
     fast_runtime=$((end-start))
     

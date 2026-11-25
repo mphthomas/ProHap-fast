@@ -8,9 +8,10 @@ Run it from the directory that holds your config.yaml, the directory a normal ru
 
 verify runs the workflow twice, in two work directories, verify_runs/<timestamp>/legacy/ and
 verify_runs/<timestamp>/fast/, each with a copy of config.yaml that differs only in `implementation` (legacy:
-legacy/src, the frozen reference; fast: src/). Both read the same inputs and references; relative input paths are
-resolved against the current directory, and every output path is moved into the arm's work directory, so nothing
-outside verify_runs/ is written. Then it compares every output, decompressed, byte for byte, and prints a table
+legacy/src, the frozen reference; fast: src/). Both arms run with `fix_bugs: false`: the fixes that config option
+turns on (by default) change the output on purpose, and are checked by the tests instead. Both read the same inputs
+and references; relative input paths are resolved against the current directory, and every output path is moved
+into the arm's work directory, so nothing outside verify_runs/ is written. Then it compares every output, decompressed, byte for byte, and prints a table
 (file, both sha256s, IDENTICAL or DIFFERENT, first differing line) and both run times. The exit status is 0 only if
 every output is identical, 1 if any differs, 2 if verify or the legacy run failed.
 
@@ -208,6 +209,8 @@ class Run:
         """The config of one arm: the user's, with implementation set, inputs resolved and outputs moved."""
         cfg = dict(self.cfg)
         cfg['implementation'] = arm
+        # the identity contract: the fast code with fix_bugs off writes the reference's output byte for byte
+        cfg['fix_bugs'] = False
         cfg['refs_dir'] = self.refs
         cfg['chromosomes'] = list(self.chromosomes)
         for key in INPUT_KEYS:
@@ -556,6 +559,11 @@ def main(argv=None):
             say('warning:', w)
         for n in notes:
             say('note:', n)
+        if cfg.get('fix_bugs', True) not in (False, 0, '0', 'false', 'False'):
+            say('note: both arms run with fix_bugs: false, the setting under which the fast code must write the '
+                'reference\'s output byte for byte. Your config runs the fast code with fix_bugs on, which fixes '
+                'bugs of the reference\'s haplotype step and so differs from it by design (CHANGELOG, "Output '
+                'changes with fix_bugs"); tests check those fixes, not verify.')
         if cfg.get('restrict_to_exons'):
             say('note: restrict_to_exons is on, so both arms read only the records that overlap an exon of a listed '
                 'transcript. Records whose ID is "." are named by their line number in the filtered VCF, so their '

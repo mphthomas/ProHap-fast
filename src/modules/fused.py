@@ -74,8 +74,9 @@ def unfused_argv(argv, filtered):
     return ['-i', filtered] + out
 
 
-def to_legacy_fused(script, args, reason):
-    """Run the filter into a file, then the reference prohap.py on it, and exit with its status. Does not return."""
+def to_legacy_fused(script, args, reason, argv=None):
+    """Run the filter into a file, then the reference prohap.py on it (with argv, default this process's arguments,
+    the -filter_* options replaced by -i), and exit with its status. Does not return."""
     sys.stdout.flush()
     print('%s (%s): %s' % (MESSAGE, Path(script).name, reason), file=sys.stderr, flush=True)
     if os.environ.get('PROHAP_FALLBACK') == 'error':
@@ -85,7 +86,8 @@ def to_legacy_fused(script, args, reason):
     filtered = os.path.join(args.tmp_dir, 'chr%s_phased_filtered.vcf.gz' % args.chromosome)
     code = subprocess.call(filter_command(args, filtered))
     if code == 0:
-        code = subprocess.call(legacy_command(script, unfused_argv(sys.argv[1:], filtered)))
+        code = subprocess.call(legacy_command(script, unfused_argv(sys.argv[1:] if argv is None else argv,
+                                                                   filtered)))
     if os.path.exists(filtered):
         os.remove(filtered)
     sys.stdout.flush()

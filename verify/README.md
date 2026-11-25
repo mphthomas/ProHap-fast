@@ -26,7 +26,9 @@ python3 /path/to/ProHap-fast/verify/verify.py --cores 8 --samples 2000 --transcr
 Your `config.yaml` stays as it is. `verify` writes only under `verify_runs/<timestamp>/` in the current directory:
 
 - `legacy/` and `fast/`: one work directory per run (an "arm"), each with its own copy of `config.yaml` that differs
-  only in `implementation`. Relative input paths in your config are resolved against the current directory, and
+  only in `implementation`. Both copies set `fix_bugs: false`: the promise of identical output holds with the fixes
+  off; `fix_bugs: true` (the default for normal runs) changes the output on purpose (see the CHANGELOG), and tests
+  check those fixes instead. Relative input paths in your config are resolved against the current directory, and
   every output path moves into the arm's directory, so neither run touches your normal outputs.
 - `input/`: the cut-down VCFs, metadata and transcript list, when you ask for a subset.
 - `legacy.log`, `fast.log`: Snakemake's output for each run.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run the reference code (legacy/src), then ProHap-fast (src/), on the same data, and check that every output file
-# is byte-identical. Every change to src/ must pass this.
+# is byte-identical. Every change to src/ must pass this. Both arms run with fix_bugs=False: the fixes that option
+# turns on change the output on purpose (CHANGELOG) and are checked by tests/test_fix_bugs.py instead.
 #
 #   tests/legacy_vs_fast.sh [-j CORES] [-k] [-g | -G] [FIXTURE | TIER ...]
 #
@@ -21,10 +22,10 @@
 #
 # Measured with -j 8 on an Apple Silicon Mac (0.2.0): small 4 minutes, medium 15, large 34 (28 of them the reference
 # on the 26,000-sample fixture); a fast run takes 15-35 s, mostly steps both arms share. tests/fixtures/sim/README.md
-# says what each fixture tests. For a workflow fixture, two work directories,
-# legacy/ and fast/, get the same config.yaml and inputs; Snakemake runs in one with `--config
-# implementation=legacy`, then in the other with `--config implementation=fast`. Then every file either run wrote
-# is compared, after decompression (gzip headers carry a timestamp). Simulated data is generated on first use into
+# says what each fixture tests. For a workflow fixture, two work directories, legacy/ and fast/, get the same
+# config.yaml and inputs; Snakemake runs in one with `--config implementation=legacy fix_bugs=False`, then in the
+# other with `--config implementation=fast fix_bugs=False`. Then every file either run wrote is compared, after
+# decompression (gzip headers carry a timestamp). Simulated data is generated on first use into
 # tests/fixtures/sim/cache/ (git-ignored).
 #
 # Needs the ProHap environment (snakemake on PATH) and the pre-built references of Ensembl release 113 in
@@ -141,7 +142,7 @@ run_arm() {
             python3 "$src/remove_UTR_seq.py" -i nodupl.fa.gz -o final.fa)
     else
         PYTHONHASHSEED=0 snakemake --snakefile "$CODE/Snakefile" --directory "$dir" --cores "$cores" --notemp \
-            --config implementation="$arm"
+            --config implementation="$arm" fix_bugs=False
     fi
 }
 

@@ -18,6 +18,23 @@ if IMPLEMENTATION not in ('fast', 'legacy'):
     raise ValueError("config 'implementation' must be 'fast' or 'legacy', not " + repr(IMPLEMENTATION))
 SRC = FAST_SRC if IMPLEMENTATION == 'fast' else LEGACY_SRC
 
+# Config `fix_bugs` (default true): the fast implementation fixes bugs of the reference's haplotype step
+# (CHANGELOG, IMPLEMENTATION_NOTES section 9). With false it writes the reference's output byte for byte, which is
+# what `verify` and the identity tests compare. legacy/src is frozen and has none of the fixes.
+def _flag(value, key):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str) and value.strip().lower() in ('true', 'false', '1', '0', 'yes', 'no'):
+        return value.strip().lower() in ('true', '1', 'yes')
+    raise WorkflowError("config '%s' must be true or false, not %r" % (key, value))
+
+FIX_BUGS = _flag(config.get('fix_bugs', True), 'fix_bugs')
+if IMPLEMENTATION == 'legacy' and FIX_BUGS:
+    raise WorkflowError("config 'implementation: legacy' runs the frozen reference code, which has none of the "
+                        "fix_bugs fixes: set 'fix_bugs: false' to run it (fix_bugs is true by default).")
+
 # macOS starts multiprocessing workers with 'spawn', which breaks the closures ProHap hands to Pool. There, every
 # script runs through a wrapper that selects 'fork', the default on Linux.
 if sys.platform == 'darwin':
@@ -389,7 +406,8 @@ rule compute_haplotypes:
         x_par2_from=config['x_par2_from'],
         max_cores=MAX_CORES,
         vcf_input=("-filter_glob \'" + FILTER_GLOB + "\' -filter_af " + str(config['phased_min_af']) + " -filter_af_field "
-                   + str(config['phased_af_field'])) if IMPLEMENTATION == 'fast' else "-i \"data/vcf/phased/chr{chr}_phased_filtered.vcf.gz\""
+                   + str(config['phased_af_field'])) if IMPLEMENTATION == 'fast' else "-i \"data/vcf/phased/chr{chr}_phased_filtered.vcf.gz\"",
+        fix_bugs=("-fix_bugs " + ('1' if FIX_BUGS else '0') + " ") if IMPLEMENTATION == 'fast' else ""
     threads: MAX_CORES
     resources:
         mem_mb=MEM_MB_PER_CHROMOSOME
@@ -400,7 +418,7 @@ rule compute_haplotypes:
         "{params.vcf_input} -db \"{input.db}\" -transcripts \"{input.tr}\" -cdna \"{input.fasta}\" -s \"{input.samples}\" "
         "-chr {wildcards.chr} -min_hap_freq {params.freq_threshold} -min_hap_count {params.count_threshold} "
         "-acc_prefix enshap_{wildcards.chr} -id_prefix haplo_chr{wildcards.chr} -require_start {params.require_start} -ignore_UTR {params.ignore_UTR} -skip_start_lost {params.skip_start_lost} "
-        "-x_par1_to {params.x_par1_to} -x_par2_from {params.x_par2_from} -threads {params.max_cores} -log \"{params.log_file}\" -tmp_dir \"{params.tmp_dir}\" -output_csv \"{output.csv}\" -output_fasta \"{output.fasta}\" " + 
+        "-x_par1_to {params.x_par1_to} -x_par2_from {params.x_par2_from} -threads {params.max_cores} -log \"{params.log_file}\" -tmp_dir \"{params.tmp_dir}\" -output_csv \"{output.csv}\" -output_fasta \"{output.fasta}\" {params.fix_bugs}" + 
         ("-output_cdna_fasta \"{params.output_cdna_file}\" " if (len(config['haplo_cdna_file']) > 0) else "")
 
 rule merge_haplo_tables:

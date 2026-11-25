@@ -664,12 +664,13 @@ Scale factor: genome = block × 315 (autosomal MANE exon bp 68.2 Mb / block 217 
 ### Harness (`bench/bench.py`)
 
 ```bash
-python3 bench/bench.py --samples 2500,5000,10000,26000 --arms legacy,fast [--threads 1]
+python3 bench/bench.py --samples 2500,5000,10000,26000 --arms legacy,fast-off,fast-on [--threads 1]
 python3 bench/bench.py --data DIR --arms legacy,/path/to/other/src
 ```
 
 For each dataset (`--data`, or the benchmark block at each `--samples`, simulated once into `bench/data/`),
-chromosome and arm (`legacy` = `legacy/src`, `fast` = `src/`, or a directory), it runs `vcf_filter_fix.py` and then
+chromosome and arm (`legacy` = `legacy/src`; `fast-off`, `fast-on` = `src/` with `prohap.py -fix_bugs 0`, `1`;
+`fast` = `src/` with its default, fix_bugs on; or a directory), it runs `vcf_filter_fix.py` and then
 `prohap.py` with the Snakefile's arguments (`-af 0` and thresholds 0 by default, so every variant and haplotype is
 kept), `PYTHONHASHSEED=0`, through `tools/run_fork.py` on macOS. Per step:
 
@@ -681,8 +682,10 @@ kept), `PYTHONHASHSEED=0`, through `tools/run_fork.py` on macOS. Per step:
   sweep (assigning variants to transcripts: the per-transcript tables), haplotypes (co-occurrence and frequencies),
   cdna (reading the cDNA FASTA), proteins, write.
 
-It prints a table, appends to `bench/results.tsv` (git-ignored) and, when two arms ran, compares their outputs after
-decompression (a convenience; `tests/legacy_vs_fast.sh` is the identity check).
+It prints a table, appends to `bench/results.tsv` (git-ignored) and compares the outputs of arms that should agree
+after decompression: the reference's (`legacy`, `fast-off`) and the fixed ones (`fast-on`, `fast`); for a fixed arm it
+says how many outputs differ from the reference's, by design (a convenience; `tests/legacy_vs_fast.sh` is the
+identity check).
 
 Design-work measurements (prototypes, lost), CPU-s per block, legacy filter+prohap: 63 (2.5k), 202 (5k), 609 (10k),
 2,072 (26k). Fast: 4.6, 6.1, 8.5, 13.5, then 23 (50k), 43 (100k), 97 (200k), 351 (500k). Fast prohap with 4 workers at
@@ -763,26 +766,27 @@ Found while building 0.2.0:
 ## 7. Upstream behaviours the reference keeps
 
 Found while checking the collapsing fix (2026-11-17). All five are in upstream `cafcc51`, `legacy/src`
-reproduces them, and the fast implementation must too. The maintainer decided to keep them and report them
-upstream; fixing one is a deliberate output change made in both trees. Line numbers are for
-`legacy/src/modules/process_haplotypes.py` with `legacy-fixes.patch` applied.
+reproduces them, and the fast implementation does too with `fix_bugs: false`. The maintainer decided to keep them in
+the reference and report them upstream; `legacy/src` stays frozen. With `fix_bugs: true` the fast implementation
+fixes those marked below (§9). Line numbers are for `legacy/src/modules/process_haplotypes.py` with
+`legacy-fixes.patch` applied.
 
-1. **The liftover check drops most indels** (line 212). A change is dropped when its ALT allele equals the
-   reference cDNA at its position, a check meant for alleles that became the reference in a liftover.
-   `get_rna_position` (`coordinates_toolbox.py:9`) keeps the VCF anchor base, so on a + strand transcript every
-   deletion matches (its ALT is the anchor base), as does an insertion whose inserted bases repeat the reference
-   bases after it. On the − strand the comparison uses reverse complements, so a deletion is dropped only when its
-   last REF base equals the anchor base. A haplotype whose only change is a dropped indel gets no row; one with
-   other changes is keyed without the indel and merges with the haplotype that lacks it. 1kG, MANE, threshold 0:
+1. **The liftover check drops most indels** (line 212). *Fixed when fix_bugs is on (§9.3).* A change is dropped when
+   its ALT allele equals the reference cDNA at its position, a check meant for alleles that became the reference in a
+   liftover. `get_rna_position` (`coordinates_toolbox.py:9`) keeps the VCF anchor base, so on a + strand transcript
+   every deletion matches (its ALT is the anchor base), as does an insertion whose inserted bases repeat the
+   reference bases after it. On the − strand the comparison uses reverse complements, so a deletion is dropped only
+   when its last REF base equals the anchor base. A haplotype whose only change is a dropped indel gets no row; one
+   with other changes is keyed without the indel and merges with the haplotype that lacks it. 1kG, MANE, threshold 0:
    the haplotype tables of chr1, 2, 3, 21 and 22 contain no + strand deletion, against 10 on the − strand. Indels
    dropped on the + strand cause every merge on chr21 (6), chr3 (2) and chr22 (1), 4 of 8 on chr2 and 3 of 10 on
    chr1; UTR SNVs cause the rest.
 2. **Stop-gained variants are filtered as UTR** when `haplo_ignore_UTR` is 1 (`check_protein_allele`, line 49,
-   applied at 387 and 395). The coding sequence is cut at the first stop codon of the mutated protein (line 380),
-   so the variant that creates that stop falls outside it. A haplotype whose only protein change is the stop-gain
-   gets no row; with other changes it is keyed without the stop-gain and usually merges with the full-length
-   haplotype, and the truncated protein never reaches the FASTA. Crafted test (Q45L; Q45L + stop; stop alone):
-   three rows with `haplo_ignore_UTR` 0, one Q45L row with count 2 with 1.
+   applied at 387 and 395). *Fixed when fix_bugs is on (§9.4).* The coding sequence is cut at the first stop codon of
+   the mutated protein (line 380), so the variant that creates that stop falls outside it. A haplotype whose only
+   protein change is the stop-gain gets no row; with other changes it is keyed without the stop-gain and usually
+   merges with the full-length haplotype, and the truncated protein never reaches the FASTA. Crafted test (Q45L; Q45L
+   + stop; stop alone): three rows with `haplo_ignore_UTR` 0, one Q45L row with count 2 with 1.
 3. **Merges are keyed on VCF ID strings, not alleles** (line 408). `vcf_filter_fix.py:111` gives every allele of a
    split multi-allelic record the record's ID, and pandas reads NA-like IDs (`NA`, `nan`, ...) as the same `nan`
    (`get_haplotypes.py:163`). Different variants with the same ID string therefore merge: count and frequencies
@@ -798,6 +802,19 @@ upstream; fixing one is a deliberate output change made in both trees. Line numb
    protein FASTA, so with `haplo_cdna_file` set the `merge_fasta` rule fails: `cat: ...haplo_cdna_chr22.fa: No such
    file or directory`, under bash strict mode. Checked on 1kG chr22 with `phased_min_af: 1.1`.
 
+
+Found while fixing the haplotype bugs (2026-11-24), all in upstream `cafcc51` and `legacy/src` too:
+
+6. **Variants that touch conflict** (`get_haplotypes.cluster_conflicting_mutations`): spans `[POS, POS +
+   len(REF)]` that merely touch remove the copy, and an indel's span includes its anchor base: adjacent SNVs, a
+   variant right after a deletion or right before an indel's anchor, an insertion followed by a SNV, a SNV on an
+   indel's anchor base. *Fixed when fix_bugs is on (§9.2).*
+7. **Start codon checks** (`check_start_change`): an indel whose anchor base is in the start codon loses it, and after
+   a 5' UTR indel the check compares reference positions with an already moved start; a lost start skips the
+   haplotype with `haplo_skip_start_lost: 1`. *Fixed when fix_bugs is on (§9.5).*
+8. **A frameshift can be called synonymous** (`process_haplotypes.py:331`): when the codons around it translate
+   the same before and after, and a haplotype with no other protein change then gets no row. *Fixed when fix_bugs
+   is on (§9.6).*
 ---
 
 ## 8. Input preparation and defaults (M9)
@@ -892,3 +909,303 @@ At 3M records, identical output: `merge_duplicate_seq.py` 0.40 GB and 72 s (D3: 
 (`records` against `read_fasta` on odd files, both scripts against the reference with every header kind, a repeated
 accession, an empty file); the `dupseq` fixture runs both at 400,000 records.
 
+
+---
+
+## 9. `fix_bugs`: fixes of the reference's haplotype bugs
+
+`prohap.py -fix_bugs 1` (config `fix_bugs: true`, the default) fixes bugs of the reference's haplotype step that lose
+haplotypes or variants; `-fix_bugs 0` writes the reference's output byte for byte, which `verify`,
+`tests/legacy_vs_fast.sh` and the CI identity tests check. The fixes live in `src/` only: `legacy/src` stays the
+frozen oracle for `fix_bugs: false`, so `implementation: legacy` with `fix_bugs: true` stops the workflow at parse
+time. The case numbers below are those of the audit of dropped haplotype copies (cases 1–15: stage 1 conflict
+check, stage 2 translation).
+
+### 9.1 Plumbing
+
+- The Snakefile reads `fix_bugs` (true/false, also 1/0 and `"true"`/`"false"`), passes `-fix_bugs 1|0` to the fast
+  `prohap.py` only, and refuses `implementation: legacy` with `fix_bugs: true`.
+- `src/modules/fixes.py`: `selected(fix_bugs)` is the set of fixes to apply, every one of `ALL` with the flag on.
+  `PROHAP_FIXES=name,...` in the environment selects a subset, for development only: unit tests of one fix, and the
+  attribution of output differences to fixes. `Settings.fixes` carries the set to the workers.
+- With `-fix_bugs 1`, input that `-fix_bugs 0` hands to the reference (§3.7) stops the run with exit status 3
+  (`fallback.cannot_fall_back`): the reference would write unfixed output without saying so. With `-fix_bugs 0` the
+  fallback strips `-fix_bugs` from the arguments, which the reference does not take.
+- `verify` sets `fix_bugs: false` in both arms' configs and notes it when the user's config has it on;
+  `tests/legacy_vs_fast.sh` passes `--config fix_bugs=False`, and the fixture configs say `fix_bugs: false`.
+- `bench/bench.py` arms `fast-off` and `fast-on`.
+
+### 9.2 Conflicting variants (fix `conflicts`, cases 1–8)
+
+The reference (`get_haplotypes.cluster_conflicting_mutations`) gives each record of a copy the span
+`[POS, POS + len(REF)]` and sorts start events before end events at the same coordinate, so spans that touch join
+one cluster; a cluster of two or more records removes the copy. The span includes an indel's anchor base, which the
+indel does not change. Cases (records on one copy; `pos REF>ALT`):
+
+| Case | Records | Reference | Fixed |
+| --- | --- | --- | --- |
+| 1 adjacent SNVs | `100 A>G`, `101 C>T` | conflict | both applied |
+| 2 a variant right after a deletion | `100 ACG>A`, `103 T>C` | conflict | both applied |
+| 3 a variant right before an indel's anchor | `99 T>G`, `100 ACG>A` | conflict | both applied |
+| 4 an insertion, then a SNV at the next base | `100 A>AT`, `101 C>G` | conflict | both applied |
+| 5 a SNV on an indel's anchor base | `100 A>T`, `100 ACG>A` | conflict | combined: `ACG>T` |
+| 6 two ALT alleles at one position | `100 A>G`, `100 A>T` | conflict | conflict |
+| 7 a SNV inside a deletion | `100 ACG>A`, `101 C>T` | conflict | conflict |
+| 8 overlapping indels | `100 ACG>A`, `101 CGT>C` | conflict | conflict |
+
+The rule with the fix (`haplotypes.trimmed_span`, `haplotypes.conflicting`): REF and ALT lose their shared prefix,
+then their shared suffix (`-` is an empty allele). What is left is an interval `[start, end)` of changed bases, or,
+for an insertion, a point between bases `start - 1` and `start`. Two records conflict when two intervals overlap,
+an insertion point lies strictly inside an interval, or two insertions sit at the same point; a record that changes
+nothing (REF equal to ALT) conflicts with nothing. Touching intervals, and an insertion at either end of an
+interval, do not conflict. The same record twice conflicts. Trimming the prefix first matters in runs: `AAA>A` at
+100 changes `[101, 103)`.
+
+The grouping's pre-check (§3.8, Conflicts) runs on the trimmed spans: `_involved_spans` marks records whose closed
+span meets another record's, a superset of the records that can conflict, and `conflicting` runs only for groups
+with at least two of them.
+
+The cDNA (`proteins.process_transcript`). Each change is mapped as the reference maps it (`get_rna_position` on
+the VCF record, truncation at splice sites, reverse complement on the − strand), which also gives `cDNA_changes`,
+the splice flags and the protein-level annotation. When the anchored changes come in increasing, non-overlapping
+order with their REF alleles in the cDNA (every haplotype the reference accepts), the reference's one-join path
+builds the cDNA, so those haplotypes come out exactly as before. Otherwise (cases 1–5 make anchored REF alleles
+share an anchor base) the changes are trimmed after the mapping: shared prefix, then suffix, in genome orientation
+(so the result matches the conflict check), then turned to the cDNA's orientation (`_trim`). Every anchored REF must
+be in the reference cDNA, and the trimmed changes must not conflict in the cDNA (they can only when a record crosses
+a splice site and its truncation keeps different bases); otherwise the haplotype is skipped with a message, like
+the reference's REF check (case 12). The cDNA is then one join of the trimmed changes in cDNA order (an insertion
+before an interval that starts at its point). Applying the anchored forms one after another, as the reference's loop
+does, fails the REF check in case 5: the SNV changes the deletion's anchor base first.
+
+The protein-level annotation keeps the reference's per-record alleles; each record's ALT is located in the
+haplotype's cDNA at its anchored location plus the length change of the trimmed changes that end at or before it
+(`_offsets`), and the records are visited in the order of their trimmed changes (`(fs)` after a frameshift follows
+that order). On the − strand the reference visits the records in reverse POS order; the cDNA order of the trimmed
+changes can differ from it when records share a POS, so the order comes from the trimmed changes.
+
+### 9.3 The liftover check (fix `liftover`, case 9)
+
+The reference leaves out a change whose ALT allele equals the reference cDNA at its location
+(`process_haplotypes.py:212`), for alleles that became the reference in a liftover. `get_rna_position` keeps the VCF
+anchor base, so the comparison is between the anchored ALT and the cDNA at the anchor: on the + strand a deletion's
+ALT is its anchor base, which always matches; an insertion matches when its inserted bases repeat the reference
+bases after it. On the − strand the alleles are reverse complemented and the location is that of the reversed REF,
+so a deletion matches when its last REF base equals its anchor (a deletion in a run, not left-aligned), and an
+insertion when it repeats the bases before it.
+
+Measured on the reference (fix off), every distinct change that reaches the check (carried by a haplotype row),
+2026-11-24:
+
+| Data | SNV / MNP left out | + deletions | − deletions | + insertions | − insertions |
+| --- | --- | --- | --- | --- | --- |
+| 1kG fixture (chr1, 21, 22, X; AF ≥ 0.01) | 0 of 162 | 3 of 3 | 0 of 2 | 1 of 2 | none |
+| `mix` (chr20, 21, 22, X; 2,500 samples) | 0 of 3,414 | 112 of 112 | 29 of 106 | 16 of 117 | 3 of 80 |
+| `ttn` (− strand, 2,500 samples) | 0 of 3,051 | none | 50 of 168 | none | 9 of 181 |
+| benchmark block, 1,000 samples | 0 of 4,260 | 166 of 166 | 41 of 114 | 24 of 174 | 5 of 118 |
+
+Every + strand deletion is left out, each because its ALT is the anchor base; no SNV is (none of these data has an
+allele that became the reference). A few changes truncated to nothing at a splice site (an indel whose changed bases
+are all intronic) also match.
+
+The fix compares the trimmed alleles (`_trim`, §9.2) in the cDNA's orientation: a change is left out only when the
+cDNA has its trimmed ALT and not its trimmed REF at the trimmed location. For a substitution this is the reference's
+test plus "and not REF"; an insertion (empty REF, always present) is never left out; a deletion (empty ALT, always
+present) is left out only when its deleted bases are not in the cDNA, which is how a deletion that became the
+reference in a liftover looks. A change truncated to nothing at a splice site is kept, as a change of nothing: it
+shows in the row (a `splice_variant`) and in the merge key, and changes no base. On all the data above the fixed check
+leaves out nothing.
+
+### 9.4 Stop-gained variants as UTR (fix `stop`, case 10)
+
+With `ignore_UTR` (the default), the reference cuts the protein at its first stop codon, `first_stop =
+protein_seq.find('*', protein_start)`, and keeps a change when `check_protein_allele(change, protein_start,
+first_stop)`: with `loc` the first ALT residue of the protein change `loc_ref:REF>loc_alt:ALT` (plus the start) and
+`alt_len` the length of the string after the last `:`, `loc >= start and loc + alt_len <= stop`. The stop residue
+is at index `first_stop`, so a change is in only when its ALT ends before the stop, and the change that creates the
+first stop always has the stop among its ALT residues (`E>*`, or `N>N*` for an indel). The length also counts the
+`(+fs)` or `(fs)` the annotation appends after a frameshift, five or four characters. The change was then left out
+of the row (and of its merge key: §7.2).
+
+The fix (`proteins.check_protein_allele_fixed`): a change is in when `start <= loc` and `loc + same <= stop`, where
+`same` counts the leading residues its REF and ALT strings share (the `(+fs)`/`(fs)` mark removed): its first changed
+residue lies at or before the stop residue. So a stop-gain (`E>*`, `same` 0) and a frameshift that makes the next
+codon a stop (`N>N*`, `same` 1, the stop at `loc + 1`) are in, and an insertion right after the stop codon, whose
+annotation window starts at the stop (`*>*L(+fs)`, `same` 1, `loc` the stop), is not: it changes no residue up to
+the stop. A synonymous change (REF equal to ALT) is in exactly when the reference has it in, so a change that keeps
+the stop codon a stop stays 3' UTR. Changes after the first stop are still left out; a change after a new stop in
+the old coding sequence among them. The `protein_changes` column is filtered the same way.
+
+A first version, `start <= loc <= stop`, also let in the insertion right after the stop codon: on the benchmark block
+it gave rows whose protein is the reference's (found by the independent check of every copy's protein, §9.7).
+
+Measured with the merge (§7.3): on the TTN data at 26,000 samples with only the `conflicts` fix, 6,266 copies of a
+row keyed by two SNVs got a truncated protein. A newly kept haplotype that carried those SNVs and a stop-gain was
+keyed by the SNVs alone, came first among the merged haplotypes, and its truncated protein stood for all 7,435
+copies; with this fix it keeps its own row.
+
+### 9.5 Start lost (fix `start`, case 11)
+
+The reference checks the start codon change by change, in cDNA order (`check_start_change`): a change at `loc`
+with REF length `ref_len` loses the start when `loc < start + 3` and `loc + ref_len > start`, and a change before the
+start moves it by its length change (a frameshift there loses it unless `force_rf`). With `skip_start_lost` (the
+default and the TRE template's) the haplotype is then skipped and its copies count as the reference; without it,
+the reading frame becomes unknown and the cDNA is translated in all three frames (§7.4). Two coordinate problems:
+
+- `loc` and `ref_len` are the anchored allele's, so an indel whose anchor base is in the codon loses the start: an
+  insertion right after the ATG (anchor = its G) on the + strand; on the − strand, where the anchor is the base after
+  the indel in cDNA order, an indel right before the ATG.
+- `loc` is in reference coordinates and `start` has already been moved by the changes before it. After an in-frame
+  insertion of 3 in the 5' UTR, a SNV in the third base of the ATG (`loc = start + 2`, `start` now `start + 3`) does
+  not lose the start, and the haplotype is translated from the moved start with `ATA`: its protein begins with `I`.
+  After a deletion of 3, a change just after the codon loses it.
+
+The fix (`proteins.start_change`): on the trimmed changes (§9.2), all in reference coordinates, the start is lost
+when a change overlaps `[start, start + 3)` or inserts bases strictly inside it (or, without `force_rf`, the
+changes before it shift it by other than a multiple of 3); otherwise it moves by the length changes of the changes
+that end at or before it. With `skip_start_lost` a lost start is found again (`proteins.rescan_start`), in the
+scanning model: the first ATG of the haplotype's cDNA, in any frame, from where the lost start codon began (the
+start of the earliest change that touches it, when that is before the codon), and translation runs from it to the
+first stop. No ATG: the haplotype is skipped, as before. Then:
+
+- `reading_frame` and the protein start are the new ATG's, for the protein and for the ALT side of the annotation;
+  the REF side keeps the reference's frame. The changes that touch the lost codon are `start_lost` and count as
+  protein changes.
+- The UTR filter (`ignore_UTR`) keeps the changes that touch the lost codon and every change from the lost start
+  up to the end of the new ATG: they decide where translation starts, so two haplotypes that differ in them must not
+  merge (§7.3). Changes before the lost start are 5' UTR and changes after the first stop 3' UTR, as for any
+  haplotype.
+- Row: `start_lost` True, `reading_frame` the new frame, `protein_prefix_length` and FASTA `start:` as for any
+  haplotype: 0 with `ignore_UTR` (the sequence begins at the new start), the new start's codon without it, which
+  `remove_stop_codons.py` uses to split off the 5' UTR translation (decision 2026-11-24: `start:` keeps its meaning).
+
+Without `skip_start_lost` a lost start leaves the reading frame unknown, as in the reference; only the test of
+whether it is lost changes.
+
+### 9.6 A frameshift called synonymous (fix `frameshift`)
+
+Found by the oracle (§9.7) once the liftover fix let insertions in runs through. The reference annotates each change
+by translating the codons its anchored REF covers in the reference cDNA and those its ALT covers in the haplotype's
+(`get_affected_codons`), and checks `synonymous` before anything else (`process_haplotypes.py:331`). For a
+frameshift the two windows can translate the same: one `A` inserted after the first `A` of `AAA` gives `AAA` again
+(`K>K(+fs)`); on the − strand, where the inserted bases come before the anchor in cDNA order, a `T` inserted before
+`TTC` gives `TTT` (`F`). Such a change is not in `protein_changes`, and a haplotype with no other protein change
+before the stop it brings is skipped ("no non-synonymous variants left"), though its protein differs from the
+frameshift on. On the oracle's data, 4,463 copies (simulated; none in the 1kG fixture), most of them insertions in
+runs.
+
+The fix: with `frameshift`, a change whose length difference is not a multiple of 3 is never synonymous; its type
+falls through to `frameshift` (or `stop_gained`, `stop_lost`, `splice_variant`, `start_lost` as before). It is still
+subject to the UTR filter: a frameshift right after the stop codon stays 3' UTR (§9.4).
+
+### 9.7 How the fixes are checked
+
+With `fix_bugs: false` nothing changes: `tests/legacy_vs_fast.sh`, `verify` and the CI identity tests compare the
+fast code with the reference byte for byte, and passed (small tier) after every step of this batch. With
+`fix_bugs: true` there is no reference to compare with, so:
+
+- **Hand-worked cases** (`tests/test_fix_bugs.py`). A crafted chromosome with one + and one − strand transcript
+  of designed cDNA (20 codons each, two exons) and one haplotype copy per case: cases 1–11 of the audit on both
+  strands, two SNVs in one codon, an insertion followed by a SNV, a SNV on an insertion's anchor, an allele that
+  became the reference, a stop-gain with a 5' UTR variant and with a variant after the new stop, a frameshift that
+  makes the next codon a stop and one right after the stop codon, start-lost haplotypes whose next ATG is in frame,
+  in another frame or absent, the 5' UTR insertion that hides a lost start from the reference, and frameshifts called
+  synonymous. Each case's protein (or `removed`, or no row) is written by hand for every set of fixes in the order
+  they were added (`PROHAP_FIXES`), so the test also shows which fix changes which case. The same file checks
+  `-fix_bugs 0` against the reference byte for byte on this chromosome, the rows (`DNA_changes` and `VCF_IDs` keep
+  the VCF's records, the stop-gain is in its row, the re-scanned start's columns and FASTA header), and the conflict
+  rule on its own.
+- **A naive oracle** (`tests/fix_oracle.py`). It recomputes the protein of every haplotype copy from the filtered
+  VCF, the annotation and the cDNA, without the fast code: records per copy, the trimmed conflict rule (pairwise),
+  the liftover check, the haplotype's exonic sequence by string edits in genome coordinates, the start codon (lost,
+  moved, found again), Biopython's translation to the first stop. A copy whose protein equals the reference's
+  expects no row. It then compares with the fast output through the `samples` column and the FASTA. Records it does
+  not model are left out and counted: across an exon boundary or an insertion at one (the reference's truncation at
+  splice sites decides those) and REF alleles not in the cDNA.
+- **A per-fix diff report** (`tests/fix_diff_report.py`), below.
+
+Oracle results with all fixes (2026-11-24, `python3 tests/fix_oracle.py all`, about 2 minutes):
+
+| Data | Copies compared | Same | Different | Left out |
+| --- | ---: | ---: | ---: | ---: |
+| 1kG fixture, chr1, 21, 22, X | 428,064 | 428,064 | 0 | 0 |
+| `mix` chr20, 21, 22, X (pandas-ambiguous, rs and `.` IDs; haploid males, PAR) | 264,584 | 264,490 | 94, all §7.3 | 8 |
+| `ttn` (TTN, − strand, 2,500 samples) | 4,994 | 4,994 | 0 | 6 |
+| benchmark block, 1,000 samples, `.` IDs | 119,980 | 119,980 | 0 | 20 |
+
+The 94 differences are copies whose row merges haplotypes with equal VCF ID strings (§7.3: `NA`-like IDs on
+chromosome 20, split multi-allelic rsIDs on 21); the row stands for the first haplotype's protein. The oracle found
+two problems on the way, both fixed: the first version of the stop fix let in a frameshift right after the stop
+codon (§9.4), and frameshifts called synonymous (§9.6).
+
+Start-lost haplotypes in the same data (fix `start`): 37 haplotypes (63 copies), none in the 1kG fixture, whose
+common variants do not touch a start codon. The next ATG is in the original frame for 18 (41 copies), in another
+frame for 18 (21 copies), and absent for 1 (1 copy, skipped).
+
+**Diff report** (`python3 tests/fix_diff_report.py 1kg`, then `mix ttn block`; every haplotype kept, the fixes added
+one at a time in the order of `fixes.ALL`, each column the change from the run before; 2026-11-24):
+
+1kG fixture (chromosomes 1, 21, 22, X; 109 transcripts; AF ≥ 0.01). Without fixes: 255 rows, 156 FASTA records, 2,617
+removed copies, all of one transcript of chromosome 21 (ENST00000380095), whose copies carry two overlapping
+deletions (case 8, still a conflict).
+
+| Change | conflicts | liftover | stop | start | frameshift |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| removed copies no longer removed | 0 | 0 | 0 | 0 | 0 |
+| rows gained / lost | 0 / 0 | 8 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| rows with other samples | 0 | 3 | 0 | 0 | 0 |
+| FASTA records gained / lost | 0 / 0 | 6 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| copies: no row → protein | 0 | 2,789 | 0 | 0 | 0 |
+| copies: protein → another protein | 0 | 2,922 | 0 | 0 | 0 |
+
+All of it is the three + strand deletions of chromosome 21 (§9.3): their carriers had no row, or a row without the
+deletion. The fixture's common variants have no adjacent pairs, stop-gains, lost starts or frameshifts.
+
+Simulated data (`mix`, `ttn`, the benchmark block at 1,000 samples). Without fixes: 6,994 rows, 5,469 FASTA records,
+2,262 removed copies.
+
+| Change | conflicts | liftover | stop | start | frameshift |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| removed copies no longer removed | 818 | 0 | 0 | 0 | 0 |
+| rows gained / lost | 74 / 0 | 708 / 746 | 942 / 517 | 15 / 0 | 49 / 2 |
+| rows with other samples | 28 | 323 | 180 | 0 | 0 |
+| FASTA records gained / lost | 63 / 0 | 590 / 590 | 322 / 4 | 14 / 0 | 35 / 1 |
+| copies: removed → protein / → no row | 392 / 426 | 0 | 0 | 0 | 0 |
+| copies: no row → protein | 0 | 6,395 | 19,512 | 62 | 4,466 |
+| copies: protein → another protein | 0 | 7,714 | 3,990 | 0 | 5 |
+| copies: protein → no row | 0 | 1,707 | 0 | 0 | 0 |
+
+No fix removes a copy, and no copy loses its protein in the end: the 1,707 copies that lose their row with the
+liftover fix carry a frameshift insertion it now keeps, which the reference calls synonymous (§9.6); the frameshift
+fix gives all 1,707 a protein again. A removed copy whose variants no longer conflict gets no row when its protein
+is the reference's (426 with the conflict fix alone). Rows lost with the liftover and stop fixes are
+rows keyed without an indel or a stop-gain that the same haplotypes now keep in their key: their copies move to
+rows of their own, with the protein that includes it. On TTN at 26,000 samples (not part of the report), 6,266
+copies got another protein with the conflict fix: a newly kept haplotype with a stop-gain, keyed without it, came
+first among the merged haplotypes and stood for all of them (§9.4); with the stop fix 5,527 of them have their
+earlier protein again.
+
+### 9.8 Cost
+
+`python3 bench/bench.py --samples 1000 --arms legacy,fast-off,fast-on` after each step (benchmark block, 60
+transcripts of chromosome 22, 1,000 samples, one thread; median of five runs of the fast arms, one of legacy; CPU
+seconds of `prohap.py` and peak memory of its process tree), with TTN and the block at 26,000 samples beside it
+(median of three):
+
+| After step | legacy | fast-off | fast-on | peak (off / on) | TTN 26k off / on | block 26k off / on |
+| --- | ---: | ---: | ---: | --- | --- | --- |
+| 1 flag | 21.2 | 1.7 | 1.7 | 793 / 793 MB | | |
+| 2 conflicts | 21.5 | 1.7 | 1.7 | 793 / 794 MB | 21.4 / 22.4 | 7.6 / 7.7 |
+| 3 liftover | 22.4 | 1.9 | 1.9 | 794 / 794 MB | 22.0 / 24.6 | 8.0 / 8.0 |
+| 4 stop | 21.8 | 1.8 | 1.8 | 794 / 794 MB | 21.7 / 23.6 | 7.8 / 8.1 |
+| 5 start | 21.6 | 1.8 | 1.8 | 794 / 794 MB | 21.3 / 24.0 | 7.9 / 8.1 |
+| 6 frameshift | 22.0 | 1.8 | 1.8 | 793 / 793 MB | 21.8 / 24.7 | 7.8 / 8.1 |
+
+Peak memory is unchanged throughout (811–818 MB at 26,000 samples). On the 1,000-sample block fix-on costs nothing
+measurable, on the 26,000-sample block about 4%. On TTN fix-on costs 5–13% more CPU. That is the work on the
+haplotypes the fixes restore, not the rules: the conflict fix turns 7,947 removed TTN copies into 618 more
+haplotypes to translate and annotate (+21% rows), each a 35,000-residue protein. Measured in one process on TTN's
+haplotypes on a quiet machine, the worker's CPU was 20.2 s without fixes, 21.9 s with `conflicts` and 22.2 s with
+`liftover` too; under the profiler the start check, trimming and the other rules take about 1% of it. Accepted
+(Morgan, 2026-11-24). The Mac ran Defender scans during the later runs (load 3–12), so differences under about 5%
+in the table are noise.

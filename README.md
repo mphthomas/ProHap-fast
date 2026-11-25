@@ -13,11 +13,14 @@ ProHap-fast builds protein haplotype databases for proteogenomics from phased ge
 [ProHap](https://github.com/ProGenNo/ProHap), of which it is a fork. It is meant for biobank cohorts: hundreds of
 thousands of phased whole-genome samples in one run, inside a Trusted Research Environment (TRE) with no network.
 
-- **Same output as ProHap.** ProHap-fast's output is byte-identical to that of its reference implementation, a
-  frozen copy of ProHap kept in [`legacy/`](legacy/README.md). You can check this on your own data with one command,
+- **Same output as ProHap, or ProHap with its haplotype bugs fixed.** With `fix_bugs: false`, ProHap-fast's output
+  is byte-identical to that of its reference implementation, a frozen copy of ProHap kept in
+  [`legacy/`](legacy/README.md). You can check this on your own data with one command,
   [`verify`](#check-it-on-your-data-verify). The reference differs from upstream ProHap only where the
   [CHANGELOG](CHANGELOG.md) says so; chiefly, when two haplotypes merge into one protein haplotype, the merged row
-  lists the samples of both, where upstream kept only the first list.
+  lists the samples of both, where upstream kept only the first list. With `fix_bugs: true`, the default,
+  ProHap-fast also fixes bugs of ProHap's haplotype step that lose haplotypes or variants (the CHANGELOG's "Output
+  changes with fix_bugs"); tests check those fixes against hand-worked proteins and an independent implementation.
 - **No downloads at run time.** Each image carries one Ensembl release with every reference ProHap derives from it
   already built: the gffutils databases, the MANE transcript list, the merged cDNA, the tagged reference proteome
   and the tagged contaminants.
@@ -145,7 +148,8 @@ goes to `.cache/` in the work directory, and its home to `.home/` there when the
 ProHap-fast (`implementation: fast`), each in its own directory under `verify_runs/<timestamp>/`, and compares
 every output byte for byte after decompression. Your `config.yaml` and your outputs are not touched. It prints a
 table (file, both sha256 sums, IDENTICAL or DIFFERENT, the first differing line) and both run times, and exits with
-status 0 only when every output is identical.
+status 0 only when every output is identical. Both runs use `fix_bugs: false`: the fixes `fix_bugs: true` makes
+change the output on purpose, so they are checked by tests instead.
 
 ```bash
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":"$PWD" -w "$PWD" -v /data:/data:ro \
@@ -188,7 +192,12 @@ Start from [`config_tre_template.yaml`](config_tre_template.yaml) (also in the i
 
 - `ensembl_release` must be the image's release. Nothing else names the release: the annotation and the reference
   transcript list follow from it.
-- `implementation: fast` (default) or `legacy` picks the implementation; both write the same output.
+- `implementation: fast` (default) or `legacy` picks the implementation; with `fix_bugs: false` both write the same
+  output.
+- `fix_bugs: true` (default) fixes bugs of ProHap's haplotype step that lose haplotypes or variants (CHANGELOG,
+  "Output changes with fix_bugs"); `false` writes ProHap's output byte for byte. `implementation: legacy` needs
+  `false`. With `true`, input that ProHap-fast would hand to the reference code (see [input
+  requirements](#input-requirements)) stops the run instead, because the reference has none of the fixes.
 - `phased_min_af` sets which variants are kept, and so the size of almost everything downstream.
 - `haplo_min_count` applies only when `haplo_min_freq` is `-1`; any other `haplo_min_freq` thresholds by frequency
   instead. `haplo_min_freq: 0` keeps every private haplotype, which at cohort scale gives a database too large to
@@ -318,7 +327,12 @@ Pangenome Reference Consortium are on Zenodo:
   ([tests/fixtures/sim](tests/fixtures/sim/README.md)). It runs in the ProHap environment with pre-built references
   (`PROHAP_REFS`), without a container.
 - `bench/simulate.py` simulates a phased cohort of any size over a block of MANE transcripts, and `bench/bench.py`
-  times the filter and `prohap.py` of each implementation on it (CPU, memory, phases).
+  times the filter and `prohap.py` of each implementation on it (CPU, memory, phases): `legacy`, and `src/` with
+  `fix_bugs` off and on (`--arms legacy,fast-off,fast-on`).
+- `tests/legacy_vs_fast.sh` and `verify` run with `fix_bugs: false`. The fixes are checked by
+  `tests/test_fix_bugs.py` (hand-worked proteins for each case, fix by fix) and `tests/fix_oracle.py`, a naive,
+  independent recomputation of every haplotype copy's protein on the 1kG fixture and simulated data
+  (`python3 tests/fix_oracle.py all`); `tests/fix_diff_report.py` counts what each fix changes in the output.
 - `pytest tests/` runs the unit tests in under a minute (pytest: `pip install --no-deps --require-hashes -r
   envs/test.pip.lock`). With pre-built references, `tests/test_identity.py` also runs `verify` on the fixture.
 - CI (GitHub Actions): `unit` runs pytest on every push and pull request; `identity` builds the image from the

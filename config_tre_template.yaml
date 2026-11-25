@@ -11,8 +11,15 @@
 # ---------------- Global parameters ----------------
 
 # fast runs ProHap-fast (src/); legacy runs the frozen reference (legacy/src).
-# Both write byte-identical output; `verify` runs both and compares them.
+# With fix_bugs: false both write byte-identical output; `verify` runs both
+# that way and compares them.
 implementation: fast
+
+# true: the fast implementation fixes bugs of the reference's haplotype step
+# that lose haplotypes or variants (CHANGELOG, "Output changes with fix_bugs").
+# false: it writes the reference's output byte for byte. implementation: legacy
+# has none of the fixes and needs false.
+fix_bugs: true
 
 # Must equal the Ensembl release of the image (prohap-fast:<version>-ensembl.v113
 # carries release 113); any other value stops the run before it starts. Nothing

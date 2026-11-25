@@ -9,8 +9,9 @@ collision, raises Unsupported), and the groups are sorted by the reference's str
 order, which is the reference's sample order.
 
 Per group the reference's own steps follow: the changes `POS:REF>ALT`, allele frequencies from INFO and VCF IDs; a
-group with conflicting variants (legacy cluster_conflicting_mutations) gives no row and its samples go to the removed
-list; the changes and frequencies are sorted by POS (the IDs are not). Counts, frequencies and the population and
+group with conflicting variants (legacy cluster_conflicting_mutations; with the fix 'conflicts', trimmed_span and
+conflicting) gives no row and its samples go to the removed list; the changes and frequencies are sorted by POS (the
+IDs are not). Counts, frequencies and the population and
 sample strings are computed only for the rows that need them (Row methods): at 500,000 samples the reference
 haplotype alone has a million members.
 """
@@ -212,6 +213,56 @@ def _involved(positions, lengths):
     return involved
 
 
+def trimmed_span(pos, ref, alt):
+    """The bases a record really changes (fix 'conflicts', IMPLEMENTATION_NOTES section 9.2): REF and ALT without
+    their shared prefix, then without their shared suffix, as (start, end), the changed bases POS + k .. end - 1.
+    end == start for an insertion: the point between bases start - 1 and start. None for a record that changes
+    nothing. '-' is an empty allele, as process_haplotypes reads it."""
+    ref = '' if ref == '-' else ref
+    alt = '' if alt == '-' else alt
+    n = min(len(ref), len(alt))
+    k = 0
+    while k < n and ref[k] == alt[k]:
+        k += 1
+    m = 0
+    while m < n - k and ref[len(ref) - 1 - m] == alt[len(alt) - 1 - m]:
+        m += 1
+    if len(ref) == len(alt) == k + m:
+        return None
+    return pos + k, pos + len(ref) - m
+
+
+def conflicting(spans):
+    """Whether any two changes conflict (fix 'conflicts'): two changed intervals [start, end) overlap, an insertion
+    point lies strictly inside a changed interval, or two insertions sit at the same point. Touching intervals, and an
+    insertion at either end of an interval, do not conflict. spans: (start, end) or None (no change)."""
+    max_end = None          # of the intervals so far
+    last_point = None       # the last insertion point so far
+    for start, end in sorted(s for s in spans if s is not None):
+        # sorted: an insertion at p comes before an interval starting at p, so every interval seen so far starts
+        # before the insertion, and every one seen before an interval starts at or before it
+        if max_end is not None and start < max_end:
+            return True
+        if start == end:
+            if last_point == start:
+                return True
+            last_point = start
+        else:
+            max_end = end if max_end is None else max(max_end, end)
+    return False
+
+
+def _involved_spans(spans):
+    """_involved for trimmed spans: records whose span (closed, so touching counts) meets another's. A superset of
+    the records that can conflict."""
+    n = len(spans)
+    present = [i for i in range(n) if spans[i] is not None]
+    involved = np.zeros(n, dtype=bool)
+    if len(present) > 1:
+        involved[present] = _involved([spans[i][0] for i in present], [spans[i][1] - spans[i][0] for i in present])
+    return involved
+
+
 _SCRATCH = {}                   # per process: arrays of one entry per haplotype copy, kept zero between calls
 
 
@@ -272,10 +323,10 @@ def group_copies(copies, n_copies):
         h2[carriers] = 0
 
 
-def transcript_rows(records, ids, autosomal, cohort):
+def transcript_rows(records, ids, autosomal, cohort, fixes=frozenset()):
     """get_haplotypes for one transcript with at least one record. records: sweep records in VCF order; ids: str() of
     their IDs as the reference reads them. Returns (rows in the reference's order, copies removed for conflicting
-    variants in the reference's order)."""
+    variants in the reference's order). fixes: modules/fixes.py; 'conflicts' changes which variants conflict."""
     copies = [r[6] for r in records]
     if not autosomal:
         # males have one copy outside the pseudo-autosomal regions: their second copy is not counted at all
@@ -297,7 +348,12 @@ def transcript_rows(records, ids, autosomal, cohort):
     carried = [len(c) > 0 for c in copies]
     columns = _Columns(positions, [r[0] + ':' + r[3] + '>' + r[4] for r in records],
                        [allele_frequency(r[5]) if carried[i] else None for i, r in enumerate(records)], ids)
-    involved = _involved(positions, [len(r[3]) for r in records])
+    fix_conflicts = 'conflicts' in fixes
+    if fix_conflicts:
+        spans = [trimmed_span(positions[i], r[3], r[4]) for i, r in enumerate(records)]
+        involved = _involved_spans(spans)
+    else:
+        involved = _involved(positions, [len(r[3]) for r in records])
     result = []
     removed = []
     for key, g in entries:
@@ -306,9 +362,13 @@ def transcript_rows(records, ids, autosomal, cohort):
             continue
         rows = group_rows[g]
         if involved[rows].sum() >= 2:
-            changelist = [[positions[i], records[i][3], records[i][4]] for i in rows.tolist()]
-            clusters = _cluster([{'change': ch, 'id': i} for i, ch in enumerate(changelist)])
-            if any(len(cluster) > 1 for cluster in clusters):
+            if fix_conflicts:
+                conflict = conflicting([spans[i] for i in rows.tolist()])
+            else:
+                changelist = [[positions[i], records[i][3], records[i][4]] for i in rows.tolist()]
+                clusters = _cluster([{'change': ch, 'id': i} for i, ch in enumerate(changelist)])
+                conflict = any(len(cluster) > 1 for cluster in clusters)
+            if conflict:
                 removed.append(group_members[g])
                 continue
         result.append(Row(rows, columns, group_members[g], len(group_members[g]), autosomal))

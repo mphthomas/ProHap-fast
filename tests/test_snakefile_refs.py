@@ -246,3 +246,37 @@ def test_large_cohort_defaults(workdir, refs_root):
     run = dry_run(workdir, cfg)
     assert '-threads 2 ' in run.command('compute_haplotypes') and 'mem_mb=6000' in run.output
 
+
+
+@pytest.mark.parametrize('implementation, fix_bugs, flag', [
+    ('fast', None, '-fix_bugs 1 '), ('fast', True, '-fix_bugs 1 '), ('fast', False, '-fix_bugs 0 '),
+    ('fast', 0, '-fix_bugs 0 '), ('fast', 'true', '-fix_bugs 1 '), ('legacy', False, None),
+])
+def test_fix_bugs_flag(workdir, refs_root, implementation, fix_bugs, flag):
+    """fix_bugs (default true) reaches the fast prohap.py as -fix_bugs 1|0; the legacy arm gets no flag."""
+    cfg = dict(base_config(workdir, refs_root), implementation=implementation)
+    if fix_bugs is not None:
+        cfg['fix_bugs'] = fix_bugs
+    run = dry_run(workdir, cfg)
+    assert run.returncode == 0, run.output
+    cmd = run.command('compute_haplotypes')
+    if flag is None:
+        assert '-fix_bugs' not in cmd and 'legacy/src/prohap.py' in cmd
+    else:
+        assert flag in cmd and '/src/prohap.py' in cmd and 'legacy/src/prohap.py' not in cmd
+
+
+@pytest.mark.parametrize('fix_bugs', [None, True, 'yes'])
+def test_legacy_needs_fix_bugs_false(workdir, refs_root, fix_bugs):
+    cfg = dict(base_config(workdir, refs_root), implementation='legacy')
+    if fix_bugs is not None:
+        cfg['fix_bugs'] = fix_bugs
+    run = dry_run(workdir, cfg)
+    assert run.returncode != 0
+    assert "set 'fix_bugs: false' to run it" in run.output, run.output
+
+
+def test_fix_bugs_must_be_a_flag(workdir, refs_root):
+    run = dry_run(workdir, dict(base_config(workdir, refs_root), fix_bugs='sometimes'))
+    assert run.returncode != 0
+    assert "config 'fix_bugs' must be true or false, not 'sometimes'" in run.output, run.output

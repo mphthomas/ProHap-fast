@@ -43,6 +43,17 @@ def legacy_command(script, argv):
     return command + [str(target)] + list(argv)
 
 
+def cannot_fall_back(script, reason):
+    """Stop with ERROR_STATUS where to_legacy would hand the run over, because the reference cannot write the output
+    asked for (prohap.py -fix_bugs 1: the reference has none of the fixes). Does not return."""
+    sys.stdout.flush()
+    print('ProHap-fast: this input needs the reference code (%s): %s' % (Path(script).name, reason), file=sys.stderr)
+    print('The reference code has none of the fix_bugs fixes, so it cannot write this output. Set fix_bugs: false '
+          '(prohap.py -fix_bugs 0) to run it with the reference code, or change the input.', file=sys.stderr,
+          flush=True)
+    os._exit(ERROR_STATUS)
+
+
 def to_legacy(script, reason, argv=None):
     """Replace this process with the reference script of the same name and the same arguments. Does not return."""
     command = legacy_command(script, sys.argv[1:] if argv is None else argv)

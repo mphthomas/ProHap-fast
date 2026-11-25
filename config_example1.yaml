@@ -1,5 +1,6 @@
  # ---------------- Global parameters ----------------
-implementation: fast      # fast (src/) or legacy (legacy/src); both write the same output
+implementation: fast      # fast (src/) or legacy (legacy/src); with fix_bugs: false both write the same output
+fix_bugs: true            # fix the reference's haplotype bugs (CHANGELOG); false for the reference's output (legacy needs false)
 ensembl_release: 113
 refs_dir: ""              # pre-built references; empty means $PROHAP_REFS, then /opt/prohap/refs
 

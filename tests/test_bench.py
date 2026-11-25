@@ -302,17 +302,21 @@ def test_reference_code_reads_the_data(refs, dataset, tmp_path, chrom):
 def test_bench_harness(refs, dataset, tmp_path):
     tsv = tmp_path / 'results.tsv'
     result = subprocess.run([sys.executable, str(BENCH), '--refs', str(refs), '--data', str(dataset), '--arms',
-                             'legacy,fast', '--tsv', str(tsv), '--work', str(tmp_path / 'work')],
+                             'legacy,fast-off,fast-on', '--tsv', str(tsv), '--work', str(tmp_path / 'work')],
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert 'dataset chr22, legacy vs fast: outputs IDENTICAL' in result.stdout.replace(dataset.name, 'dataset')
+    out = result.stdout.replace(dataset.name, 'dataset')
+    assert 'dataset chr22, legacy vs fast-off: outputs IDENTICAL' in out
+    assert re.search(r'dataset chr22, fast-on vs legacy: [0-9]+ of [0-9]+ outputs differ \(fix_bugs on, by design\)',
+                     out), out
     rows = [line.split('\t') for line in tsv.read_text().split('\n')[1:-1]]
-    assert [(r[3], r[7], r[8]) for r in rows] == [(c, a, s) for c in ('22', 'X') for a in ('legacy', 'fast')
+    assert [(r[3], r[7], r[8]) for r in rows] == [(c, a, s) for c in ('22', 'X')
+                                                  for a in ('legacy', 'fast-off', 'fast-on')
                                                   for s in ('filter', 'prohap')]
     prohap = [r for r in rows if r[8] == 'prohap']
     assert all(float(r[11]) > 0 and float(r[13]) > 0 for r in prohap)
     expected = {'legacy': ['setup', 'sweep', 'haplotypes', 'cdna', 'proteins', 'write'],
-                'fast': ['setup', 'cdna', 'sweep', 'write']}
+                'fast-off': ['setup', 'cdna', 'sweep', 'write'], 'fast-on': ['setup', 'cdna', 'sweep', 'write']}
     assert all([p.split('=')[0] for p in r[14].split(';')] == expected[r[7]] for r in prohap)
 
 

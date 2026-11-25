@@ -90,6 +90,7 @@ def test_arm_config_resolves_inputs_and_moves_outputs(tmp_path, monkeypatch):
     run = verify.Run(cfg, args(), str(tmp_path))
     legacy, fast = run.arm_config('legacy'), run.arm_config('fast')
     assert legacy['implementation'] == 'legacy' and fast['implementation'] == 'fast'
+    assert legacy['fix_bugs'] is False and fast['fix_bugs'] is False
     assert {k: v for k, v in legacy.items() if k != 'implementation'} == \
         {k: v for k, v in fast.items() if k != 'implementation'}
     up = os.path.join('..', '..', '..')

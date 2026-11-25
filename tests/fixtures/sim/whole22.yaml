@@ -6,6 +6,8 @@
 # crap.fasta. References come from $PROHAP_REFS (refs_dir is empty).
 
 implementation: fast
+# identity fixtures: with fix_bugs off the fast code must write the reference's output byte for byte
+fix_bugs: false
 ensembl_release: 113
 refs_dir: ""
 

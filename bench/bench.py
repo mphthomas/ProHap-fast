@@ -2,7 +2,7 @@
 """Time the filter and prohap.py of each implementation on simulated data: wall time, CPU time, memory, and the
 phases of prohap.py.
 
-    python3 bench/bench.py --samples 2500,5000 --arms legacy,fast
+    python3 bench/bench.py --samples 2500,5000 --arms legacy,fast-off,fast-on
     python3 bench/bench.py --data DIR --arms legacy --threads 4
 
 For every dataset, chromosome and arm, the harness runs the two steps of the workflow that scale with the cohort,
@@ -20,8 +20,12 @@ runs with PYTHONHASHSEED=0 (through tools/run_fork.py on macOS), in its own work
               write. The fast implementation reads the cDNA during setup and computes haplotypes and proteins while
               it reads the VCF, so its phases are setup, cdna, sweep (everything streamed) and write.
 
-When two arms ran, their outputs (the filtered VCF, haplotype table, FASTA, cDNA FASTA and removed-samples log) are
-compared after decompression; the identity check proper is tests/legacy_vs_fast.sh.
+Arms: legacy (legacy/src), fast-off (src/ with prohap.py -fix_bugs 0), fast-on (src/ with -fix_bugs 1), fast
+(src/ with prohap.py's default, fix_bugs on), or a script directory (run with its own defaults). Arms that should
+write the same output are compared after decompression (the filtered VCF, haplotype table, FASTA, cDNA FASTA and
+removed-samples log): the reference's (legacy, fast-off, and a directory whose prohap.py has no -fix_bugs) and the
+fixed ones (fast-on, fast, other directories). A fixed arm differs from the reference by design; the harness says in
+how many files. The identity check proper is tests/legacy_vs_fast.sh.
 
 Data: --data DIR (any directory written by bench/simulate.py; every chromosome in its transcripts.csv), or
 --samples N,... for the benchmark block: --transcripts consecutive MANE transcripts of --chrom from --first (default
@@ -47,7 +51,9 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SIMULATE = os.path.join(ROOT, 'bench', 'simulate.py')
-ARMS = {'legacy': os.path.join(ROOT, 'legacy', 'src'), 'fast': os.path.join(ROOT, 'src')}
+ARMS = {'legacy': os.path.join(ROOT, 'legacy', 'src'), 'fast': os.path.join(ROOT, 'src'),
+        'fast-off': os.path.join(ROOT, 'src'), 'fast-on': os.path.join(ROOT, 'src')}
+FIX_BUGS = {'fast-off': ['-fix_bugs', '0'], 'fast-on': ['-fix_bugs', '1']}     # extra prohap.py arguments
 PHASE_MARKERS = [               # (phase that starts, text of the line prohap.py prints when it starts)
     ('sweep', 'Assigning variants to transcripts.'),
     ('haplotypes', 'Computing the co-occurrence of alleles.'),
@@ -192,6 +198,17 @@ def phases(lines, wall, cdna):
 
 # ---------------------------------------------------------------- main
 
+def arm_kind(name, src):
+    """'reference' for an arm that writes the reference's output (legacy, fast-off, or a script directory whose
+    prohap.py has no -fix_bugs), 'fixed' for one that applies the fix_bugs fixes."""
+    if name in ('legacy', 'fast-off'):
+        return 'reference'
+    if name in ('fast', 'fast-on'):
+        return 'fixed'
+    with open(os.path.join(src, 'prohap.py')) as fh:
+        return 'fixed' if '"-fix_bugs"' in fh.read() else 'reference'
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0], epilog=__doc__.split('\n\n', 1)[1],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -205,9 +222,10 @@ def main(argv=None):
     parser.add_argument('--transcripts', type=int, default=60, help='benchmark block: transcripts (default 60)')
     parser.add_argument('--ids', default='dot', help='benchmark block: simulate.py --ids (default dot)')
     parser.add_argument('--seed', type=int, default=0, help='benchmark block: simulate.py --seed (default 0)')
-    parser.add_argument('--arms', default='legacy,fast',
-                        help='comma-separated: legacy (legacy/src), fast (src/) or a script directory '
-                             '(default legacy,fast)')
+    parser.add_argument('--arms', default='legacy,fast-off,fast-on',
+                        help='comma-separated: legacy (legacy/src), fast-off / fast-on (src/ with prohap.py '
+                             '-fix_bugs 0 / 1), fast (src/, its default) or a script directory '
+                             '(default legacy,fast-off,fast-on)')
     parser.add_argument('--threads', type=int, default=1, help='prohap.py -threads (default 1)')
     parser.add_argument('--af', default='0', help='vcf_filter_fix.py -af (default 0: keep every variant)')
     parser.add_argument('--min-freq', default='0', help='prohap.py -min_hap_freq (default 0)')
@@ -232,6 +250,7 @@ def main(argv=None):
         if not os.path.isfile(os.path.join(src, 'prohap.py')):
             parser.error('arm %s: no prohap.py in %s' % (arm, src))
         arms.append((arm if arm in ARMS else os.path.basename(src.rstrip('/')), src))
+    kinds = {name: arm_kind(name, src) for name, src in arms}
     datasets = [os.path.abspath(d) for d in args.data] if args.data else \
         [standard_dataset(args, int(n)) for n in args.samples.split(',')]
 
@@ -244,6 +263,7 @@ def main(argv=None):
     rows = []
     failed = False
     comparisons = []
+    notes = []
 
     print('work directory:', work)
     for path in datasets:
@@ -277,7 +297,8 @@ def main(argv=None):
                                          '-threads', str(args.threads), '-log', 'prohap_chr%s.log' % chrom,
                                          '-tmp_dir', 'tmp', '-output_csv', 'haplo_chr%s.tsv.gz' % chrom,
                                          '-output_fasta', 'haplo_chr%s.fa' % chrom]
-                               + (['-output_cdna_fasta', 'haplo_cdna_chr%s.fa' % chrom] if args.cdna else [])),
+                               + (['-output_cdna_fasta', 'haplo_cdna_chr%s.fa' % chrom] if args.cdna else [])
+                               + FIX_BUGS.get(arm, [])),
                 ]
                 for step, cmd in steps:
                     print('%s chr%s %s %s ...' % (dataset, chrom, arm, step), end=' ', flush=True)
@@ -295,12 +316,20 @@ def main(argv=None):
                 else:
                     outputs[arm] = {f: sha256_content(os.path.join(d, f)) for f in sorted(os.listdir(d))
                                     if f not in ('tmp', 'filter.out', 'prohap.out')}
-            if len(outputs) > 1:
-                names = list(outputs)
-                files = sorted(set().union(*outputs.values()))
-                same = all(len({o.get(f) for o in outputs.values()}) == 1 for f in files)
-                comparisons.append((dataset, chrom, ' vs '.join(names), same,
-                                    [f for f in files if len({o.get(f) for o in outputs.values()}) > 1]))
+            for kind in ('reference', 'fixed'):
+                group = {name: o for name, o in outputs.items() if kinds[name] == kind}
+                if len(group) > 1:
+                    files = sorted(set().union(*group.values()))
+                    diff = [f for f in files if len({o.get(f) for o in group.values()}) > 1]
+                    comparisons.append((dataset, chrom, ' vs '.join(group), not diff, diff))
+            reference = next((name for name in outputs if kinds[name] == 'reference'), None)
+            for name in outputs:
+                if kinds[name] == 'fixed' and reference is not None:
+                    files = sorted(set(outputs[name]) | set(outputs[reference]))
+                    diff = [f for f in files if outputs[name].get(f) != outputs[reference].get(f)]
+                    notes.append('%s chr%s, %s vs %s: %d of %d outputs differ (fix_bugs on, by design)%s'
+                                 % (dataset, chrom, name, reference, len(diff), len(files),
+                                    ': ' + ', '.join(diff) if diff else ''))
 
     widths = [max(len(str(r[i])) for r in rows + [COLUMNS]) for i in range(len(COLUMNS))]
     print()
@@ -309,6 +338,8 @@ def main(argv=None):
     for dataset, chrom, names, same, diff in comparisons:
         print('%s chr%s, %s: %s' % (dataset, chrom, names, 'outputs IDENTICAL' if same else
                                     'outputs DIFFERENT: ' + ', '.join(diff)))
+    for note in notes:
+        print(note)
     if args.tsv:
         new = not os.path.exists(args.tsv)
         with open(args.tsv, 'a') as fh:
