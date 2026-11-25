@@ -10,7 +10,7 @@ change is also made in `legacy/src`, the reference implementation that ProHap-fa
 changes with fix_bugs** sections list fixes of ProHap bugs made in `src/` only: they apply with `fix_bugs: true`
 (the default), and with `fix_bugs: false` the output is the reference's.
 
-## [Unreleased]
+## [1.1.0] - 2026-11-25
 
 ### Added
 
@@ -235,7 +235,7 @@ changes with fix_bugs** sections list fixes of ProHap bugs made in `src/` only: 
   name ends in `.gz`: the table holds only the header line and the FASTA is empty. Names without `.gz` are written
   as before. As upstream, no cDNA FASTA is written for such a chromosome.
 
-[Unreleased]: https://github.com/mphthomas/ProHap-fast/compare/v1.0.0...HEAD
+[1.1.0]: https://github.com/mphthomas/ProHap-fast/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mphthomas/ProHap-fast/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/mphthomas/ProHap-fast/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mphthomas/ProHap-fast/compare/v0.1.0...v0.2.0
